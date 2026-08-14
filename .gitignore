@@ -1,0 +1,51 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.idea/
+
+# Per-machine assistant permission grants. Machine-specific and rewritten on
+# every session; nothing here is part of the project.
+.claude/
+
+# Package and model caches kept inside the project so they land on drive F
+# and disappear with a single `rm -rf .cache`.
+.cache/
+
+# Langfuse bind-mount data. Recreated by `docker compose up`.
+docker/
+
+# Local-only working areas, by explicit decision (see CLAUDE.md): the test
+# suite and the working notes, plans, reports and diagram sources.
+tests/
+docs/
+
+# Vector index and BM25 corpus. Rebuilt by `python ingest.py`; a committed
+# index would go stale against data/ with no signal that it had.
+index/
+
+# Runtime logs and crash-recovery checkpoints. Post-mortem artefacts, not
+# project history.
+logs/
+*.log
+runtime/
+
+# Markdown: only README.md and the final report are tracked. Agent-facing
+# docs (CLAUDE.md, AGENTS.md, CONTRIBUTING.md, insights.md, handoff.md) are
+# local-only by explicit decision -- they never leave this machine, so every
+# session must run from this same checkout.
+*.md
+!README.md
+!report/*.md
+
+# output/ holds generated reports. Ignore its contents, then re-include the
+# reports and the placeholder: a stray file from a crashed run must not be
+# picked up by a broad `git add`. Ignoring `output/` itself would make these
+# negations unreachable.
+output/*
+!output/.gitkeep
+!output/*.md

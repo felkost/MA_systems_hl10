@@ -1,0 +1,14 @@
+# Development gate and tooling. Installed into .venv before the first gate
+# run; the application requirements are only needed from stage 1 onward.
+
+black>=24.0
+flake8>=7.0
+mypy>=1.10
+pytest>=8.0
+pytest-cov>=5.0
+pip-audit>=2.7
+
+# PNG export of stage diagrams (diagram-design skill). The browser download
+# (`playwright install chromium`) is handed to the author, never run
+# unprompted.
+playwright>=1.45

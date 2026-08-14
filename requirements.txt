@@ -1,0 +1,34 @@
+# Application dependencies. Floors now; exact pins are recorded at stage 1,
+# the first time this file is installed into .venv, so the pins reflect what
+# was actually resolved rather than guessed versions.
+
+# Protocols
+fastmcp>=2.0
+acp-sdk>=1.0
+
+# Agents
+langchain>=1.3,<2
+langgraph>=1.0
+langgraph-checkpoint-sqlite>=2.0
+langchain-openai>=1.0
+pydantic>=2.7
+pydantic-settings>=2.2
+
+# Observability
+langfuse>=3.0
+opentelemetry-sdk>=1.25
+opentelemetry-exporter-otlp>=1.25
+opentelemetry-instrumentation-httpx>=0.46b0
+opentelemetry-instrumentation-asgi>=0.46b0
+
+# Retrieval stack (ported from hl8)
+chromadb>=0.5
+langchain-chroma>=0.1
+rank-bm25>=0.2
+sentence-transformers>=3.0
+pypdf>=4.0
+
+# Tools
+httpx>=0.27
+trafilatura>=1.9
+ddgs>=9.0

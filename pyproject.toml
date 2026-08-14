@@ -1,0 +1,14 @@
+[tool.black]
+line-length = 88
+
+[tool.mypy]
+python_version = "3.12"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+exclude = '(?x)(^\.venv/|^\.cache/|^docs/|^index/|^output/|^logs/|^runtime/|^report/|^data/|^docker/)'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "smoke: boots real servers on ephemeral ports; excluded from the default gate",
+]

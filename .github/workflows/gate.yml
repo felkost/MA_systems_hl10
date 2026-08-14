@@ -1,0 +1,33 @@
+# Remote gate: the deterministic, dependency-free half of the local gate.
+#
+# pytest and mypy are deliberately absent here, not forgotten:
+# - tests/ is local-only by repository policy (see CLAUDE.md), so the suite
+#   never reaches GitHub and cannot run in CI;
+# - mypy without the full dependency stack installed reports "no issues"
+#   precisely because it cannot see the libraries (measured in hl8), and
+#   installing the stack (torch, chromadb) makes CI minutes-slow for no
+#   signal the local gate does not already give.
+# The full gate runs locally before every commit (CONTRIBUTING.md).
+
+name: gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install checkers
+        run: pip install black flake8
+      - name: black
+        run: black --check .
+      - name: flake8
+        run: flake8 .
