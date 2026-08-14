@@ -54,10 +54,47 @@ The Critic can send the Researcher back for another round with concrete
 feedback; the loop is capped in code, not in a prompt. Nothing reaches disk
 without an explicit `approve` at the terminal.
 
+## The main scenario
+
+One question, end to end. Every arrow between the Supervisor and an agent is an
+ACP call; every arrow from an agent to a tool server is an MCP call.
+
+```mermaid
+sequenceDiagram
+    actor You
+    participant S as Supervisor
+    participant P as Planner
+    participant R as Researcher
+    participant C as Critic
+    participant Search as SearchMCP
+    participant Report as ReportMCP
+
+    You->>S: a research question
+    S->>P: ACP · plan it
+    P->>Search: MCP · preliminary search
+    P-->>S: ResearchPlan
+
+    loop until APPROVE, capped in code
+        S->>R: ACP · research this
+        R->>Search: MCP · search · read · knowledge
+        R-->>S: findings with citations
+        S->>C: ACP · critique this
+        C->>Search: MCP · fact-check
+        C-->>S: CritiqueResult + verdict
+    end
+
+    S-->>You: approve / edit / reject?
+    You->>S: approve
+    S->>Report: MCP · save_report
+    Report-->>You: a file in output/
+```
+
 ## Install and run
 
-You need Python 3.12, an OpenAI API key, Docker (for Langfuse) and about
-3 GB of disk for the index and the reranking model.
+You need Python 3.12, an API key for your model provider (OpenAI or
+OpenRouter — chosen per agent in `.env`, see the comments in `.env.example`),
+Docker for Langfuse, and about 3 GB of disk for the index and the reranking
+model.
 
 ```bash
 git clone <this repository>
@@ -80,10 +117,31 @@ python acp_server.py                 # port 8903
 python main.py
 ```
 
+## Cleanup
+
+Stop the REPL and the servers with `Ctrl+C` — `servers.py` shuts its three
+children down with it. Then, in order of how much you want gone:
+
+```bash
+docker compose down                  # stop Langfuse, keep its traces
+docker compose down -v               # ...and delete them with the volumes
+```
+
+```bash
+rm -rf index/                        # the search index; rebuild with python ingest.py
+rm -rf logs/ runtime/                # rotating logs and the crash-recovery checkpoint
+rm -rf .cache/                       # downloaded models and package caches
+rm -rf .venv/                        # the environment itself
+```
+
+Everything above is rebuildable from the repository — nothing there is a
+source of truth. The two directories to leave alone are `data/` (the documents
+the index is built from) and `output/` (reports you approved).
+
 ## Progress
 
 - [x] Stage 0 — kickoff: repository, standards, staged plan
-- [ ] Stage 1 — RAG foundation (`ingest.py`, `retriever.py`, manifest with content hashes)
+- [x] Stage 1 — RAG foundation (`ingest.py`, `retriever.py`, manifest with content hashes)
 - [ ] Stage 2 — SearchMCP :8901 (3 tools + resource)
 - [ ] Stage 3 — ReportMCP :8902 (`save_report` + resource)
 - [ ] Stage 4 — ACP server with the Planner
