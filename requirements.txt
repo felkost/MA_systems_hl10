@@ -3,9 +3,13 @@
 # the application requirement names -- not the whole environment, which also
 # holds transitive packages this file does not name directly.
 
-# Protocols
+# Protocols. a2a-sdk needs the [http-server] extra to serve at all: without
+# it the route factories raise at import. acp-sdk was removed when the brief
+# moved to A2A -- ACP itself was donated into A2A under the Linux Foundation
+# in August 2025 and its repository is archived.
 fastmcp==3.4.7
-acp-sdk==1.0.3
+a2a-sdk[http-server]==1.1.2
+langchain-mcp-adapters==0.3.2
 
 # Agents
 langchain==1.3.15

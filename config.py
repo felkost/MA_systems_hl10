@@ -55,10 +55,16 @@ class Settings(BaseSettings):
     # 127.0.0.1 as a security invariant. Base URLs are a stage-2 concern:
     # FastMCP's real client-connection path is verified against the
     # installed package then, not guessed now.
+    #
+    # One A2A port per agent: A2A has no protocol-level routing by agent
+    # name, so the brief prescribes one server per agent, each with its own
+    # Agent Card.
     search_mcp_port: int = 8901
     report_mcp_port: int = 8902
-    acp_port: int = 8903
-    mcp_acp_shared_token: SecretStr | None = None
+    planner_a2a_port: int = 8903
+    researcher_a2a_port: int = 8904
+    critic_a2a_port: int = 8905
+    mcp_a2a_shared_token: SecretStr | None = None
 
     max_revisions: int = Field(default=2, ge=1, le=3)
 
