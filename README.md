@@ -1,15 +1,16 @@
-# MA_systems_hl9
+# MA_systems_hl10
 
 A terminal multi-agent research system where every hop crosses a protocol.
 You ask a research question; four agents plan, research and critique the
 answer, and a report is saved only after you approve it. The agents talk to
-their tools over **MCP** and to each other over **ACP** — the coordinator is
-the only agent living in your terminal's process.
+their tools over **MCP** and to each other over **A2A** — each sub-agent is
+its own A2A server with its own Agent Card, and the coordinator is the only
+agent living in your terminal's process.
 
-Built with LangChain/LangGraph, FastMCP, `acp-sdk` and Langfuse. Extends
+Built with LangChain/LangGraph, FastMCP, `a2a-sdk` and Langfuse. Extends
 [MA_systems_hl8](https://github.com/felkost/MA_systems_hl8), which ran the
 same Plan → Research → Critique loop in a single process; this project splits
-it across four.
+it across six.
 
 ## Architecture
 
@@ -21,10 +22,10 @@ flowchart TD
         Supervisor["Supervisor agent<br/>delegation tools + HITL gate"]
     end
 
-    subgraph ACP["ACP server :8903"]
-        Planner["Planner<br/>→ ResearchPlan"]
-        Researcher["Researcher<br/>→ findings"]
-        Critic["Critic<br/>→ CritiqueResult"]
+    subgraph A2A["A2A agent servers — one per agent, each with an Agent Card"]
+        Planner["Planner :8903<br/>→ ResearchPlan"]
+        Researcher["Researcher :8904<br/>→ findings"]
+        Critic["Critic :8905<br/>→ CritiqueResult"]
     end
 
     subgraph MCP["MCP servers"]
@@ -36,9 +37,9 @@ flowchart TD
     Langfuse["Langfuse (self-hosted)<br/>one trace across all four processes"]
 
     User --> Supervisor
-    Supervisor -- ACP --> Planner
-    Supervisor -- ACP --> Researcher
-    Supervisor -- ACP --> Critic
+    Supervisor -- A2A --> Planner
+    Supervisor -- A2A --> Researcher
+    Supervisor -- A2A --> Critic
     Supervisor -- "MCP (after human approval)" --> Report
     Planner -- MCP --> Search
     Researcher -- MCP --> Search
@@ -46,7 +47,7 @@ flowchart TD
     Search --> Stores
     Report --> Stores
     Local -.-> Langfuse
-    ACP -.-> Langfuse
+    A2A -.-> Langfuse
     MCP -.-> Langfuse
 ```
 
@@ -57,30 +58,31 @@ without an explicit `approve` at the terminal.
 ## The main scenario
 
 One question, end to end. Every arrow between the Supervisor and an agent is an
-ACP call; every arrow from an agent to a tool server is an MCP call.
+A2A call to that agent's own server; every arrow from an agent to a tool
+server is an MCP call.
 
 ```mermaid
 sequenceDiagram
     actor You
     participant S as Supervisor
-    participant P as Planner
-    participant R as Researcher
-    participant C as Critic
+    participant P as Planner :8903
+    participant R as Researcher :8904
+    participant C as Critic :8905
     participant Search as SearchMCP
     participant Report as ReportMCP
 
     You->>S: a research question
-    S->>P: ACP · plan it
+    S->>P: A2A · plan it
     P->>Search: MCP · preliminary search
     P-->>S: ResearchPlan
 
     loop until APPROVE, capped in code
-        S->>R: ACP · research this
+        S->>R: A2A · research this
         R->>Search: MCP · search · read · knowledge
         R-->>S: findings with citations
-        S->>C: ACP · critique this
+        S->>C: A2A · critique this
         C->>Search: MCP · fact-check
-        C-->>S: CritiqueResult + verdict
+        C-->>S: CritiqueResult + verdict as a data part
     end
 
     S-->>You: approve / edit / reject?
@@ -98,13 +100,13 @@ model.
 
 ```bash
 git clone <this repository>
-cd MA_systems_hl9
+cd MA_systems_hl10
 python -m venv .venv
 source .venv/Scripts/activate        # or your platform's equivalent
 pip install -r requirements.txt -r requirements-dev.txt
 cp .env.example .env                 # then fill in the keys
 python ingest.py                     # build the search index (once)
-python servers.py                    # start SearchMCP, ReportMCP, ACP
+python servers.py                    # start both MCP and all three A2A servers
 python main.py                       # the REPL, in a second terminal
 ```
 
@@ -113,7 +115,7 @@ Or start each server yourself, as the assignment prescribes:
 ```bash
 python mcp_servers/search_mcp.py     # port 8901
 python mcp_servers/report_mcp.py     # port 8902
-python acp_server.py                 # port 8903
+python a2a_servers.py                # ports 8903, 8904, 8905
 python main.py
 ```
 
@@ -144,8 +146,8 @@ the index is built from) and `output/` (reports you approved).
 - [x] Stage 1 — RAG foundation (`ingest.py`, `retriever.py`, manifest with content hashes)
 - [ ] Stage 2 — SearchMCP :8901 (3 tools + resource)
 - [ ] Stage 3 — ReportMCP :8902 (`save_report` + resource)
-- [ ] Stage 4 — ACP server with the Planner
-- [ ] Stage 5 — Researcher + Critic over ACP
+- [ ] Stage 4 — the Planner's A2A server :8903
+- [ ] Stage 5 — Researcher :8904 + Critic :8905 over A2A
 - [ ] Stage 6 — Supervisor + REPL: the loop runs over the protocols
 - [ ] Stage 7 — HITL on `save_report` + crash-safe checkpoint
 - [ ] Stage 8 — launcher, preflight, auth token
