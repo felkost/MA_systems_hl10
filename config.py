@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     rerank_confidence_floor: float = 0.3
     max_knowledge_search_length: int = Field(default=3000, ge=500, le=10000)
 
+    # -- SearchMCP tools (stage 2): first reader is mcp_servers/search_mcp.py
+    max_search_results: int = Field(default=5, ge=1, le=20)
+    max_url_content_length: int = Field(default=8000, ge=500, le=50000)
+    http_timeout_seconds: float = Field(default=10.0, gt=0.0, le=60.0)
+
     # -- Provider selection (spec Sec 16)
     llm_provider: Provider = "openai"
     model_name: str = "gpt-4.1-mini"
@@ -133,6 +138,21 @@ class Settings(BaseSettings):
         provider: Provider | None = getattr(self, f"{role}_provider")
         model: str | None = getattr(self, f"{role}_model_name")
         return provider or self.llm_provider, model or self.model_name
+
+    def search_mcp_url(self) -> str:
+        """SearchMCP's Streamable HTTP endpoint.
+
+        Returns
+        -------
+        str
+            `http://127.0.0.1:<search_mcp_port>/mcp` -- the mount path is
+            `fastmcp==3.4.7`'s Streamable HTTP default
+            (`fastmcp.settings.Settings().streamable_http_path`), confirmed
+            against the installed package rather than assumed. Stage 4's
+            `MultiServerMCPClient` config reads this method, not a guessed
+            string.
+        """
+        return f"http://127.0.0.1:{self.search_mcp_port}/mcp"
 
     @field_validator(*_BLANK_MEANS_UNSET_FIELDS, mode="before")
     @classmethod

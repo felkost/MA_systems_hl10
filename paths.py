@@ -57,3 +57,17 @@ def corpus_path(index_dir: str | Path) -> Path:
     also stored as plain JSON.
     """
     return resolve(index_dir) / "chunks.json"
+
+
+def log_path(service: str, log_dir: str | Path = "logs") -> Path:
+    """Locate the rotating log file for one long-lived process.
+
+    Parameters
+    ----------
+    service : str
+        Process name, e.g. `"search_mcp"` -- the file is `<service>.log`.
+    log_dir : str or Path, default "logs"
+        Explicit so a test can redirect it under `tmp_path`, the same shape
+        `manifest_path`/`corpus_path` already use for `index_dir`.
+    """
+    return resolve(log_dir) / f"{service}.log"

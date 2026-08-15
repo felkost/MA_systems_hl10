@@ -34,7 +34,7 @@ flowchart TD
     end
 
     Stores[("Chroma index + BM25<br/>output/ reports")]
-    Langfuse["Langfuse (self-hosted)<br/>one trace across all four processes"]
+    Langfuse["Langfuse (self-hosted)<br/>one trace across every process"]
 
     User --> Supervisor
     Supervisor -- A2A --> Planner
@@ -119,6 +119,75 @@ python a2a_servers.py                # ports 8903, 8904, 8905
 python main.py
 ```
 
+## Configuration: providers and models
+
+Every model in this system — the four agents plus the evaluation judge — is
+chosen **per role**, with a global fallback:
+
+```
+provider(role) = <ROLE>_PROVIDER   or LLM_PROVIDER
+model(role)    = <ROLE>_MODEL_NAME or MODEL_NAME
+```
+
+`<ROLE>` is one of `SUPERVISOR`, `PLANNER`, `RESEARCHER`, `CRITIC`, `JUDGE`.
+
+**The typical configuration is one line.** `LLM_PROVIDER` and `MODEL_NAME`
+already default to `openai` and `gpt-4.1-mini` in `config.py`, so everything on
+OpenAI needs only:
+
+```ini
+OPENAI_API_KEY=sk-...
+```
+
+Moving every role to OpenRouter is three lines:
+
+```ini
+LLM_PROVIDER=openrouter
+MODEL_NAME=openai/gpt-4.1-mini
+OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+Giving one role a stronger model is one more, with nothing else touched:
+
+```ini
+CRITIC_MODEL_NAME=anthropic/claude-sonnet-4.5
+```
+
+Providers may be mixed per role. Each resolved role's key must be present:
+
+```ini
+LLM_PROVIDER=openai
+CRITIC_PROVIDER=openrouter
+CRITIC_MODEL_NAME=anthropic/claude-sonnet-4.5
+OPENAI_API_KEY=sk-...
+OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+Two rules are checked when the configuration is loaded — offline, in every
+process, before any request is sent:
+
+- **Model ids must match their provider.** OpenRouter ids are always
+  `vendor/slug`; OpenAI ids never contain a slash. A mismatched pair is refused
+  at construction, naming the role — never sent to the wrong endpoint.
+- **A role's key must exist.** A role resolving to a provider whose API key is
+  absent fails the same way, naming the role and the missing variable. Which
+  keys are *required* is decided by the roles you actually configured, which is
+  why both key fields are optional.
+
+**Embeddings are a separate setting, because OpenRouter has no embeddings
+endpoint:**
+
+```ini
+EMBEDDING_PROVIDER=local            # openai | local
+EMBEDDING_MODEL=BAAI/bge-m3         # a Hugging Face id when local
+```
+
+With `local` embeddings and OpenRouter chat, no OpenAI key is needed anywhere.
+`index/manifest.json` records the embedding provider, model and dimensions that
+built the index; an index built under a different fingerprint is refused rather
+than answering from vectors of another embedding space — rebuild it with
+`python ingest.py`.
+
 ## Cleanup
 
 Stop the REPL and the servers with `Ctrl+C` — `servers.py` shuts its three
@@ -144,7 +213,7 @@ the index is built from) and `output/` (reports you approved).
 
 - [x] Stage 0 — kickoff: repository, standards, staged plan
 - [x] Stage 1 — RAG foundation (`ingest.py`, `retriever.py`, manifest with content hashes)
-- [ ] Stage 2 — SearchMCP :8901 (3 tools + resource)
+- [x] Stage 2 — SearchMCP :8901 (3 tools + resource)
 - [ ] Stage 3 — ReportMCP :8902 (`save_report` + resource)
 - [ ] Stage 4 — the Planner's A2A server :8903
 - [ ] Stage 5 — Researcher :8904 + Critic :8905 over A2A
