@@ -88,6 +88,16 @@ class Settings(BaseSettings):
     max_url_content_length: int = Field(default=8000, ge=500, le=50000)
     http_timeout_seconds: float = Field(default=10.0, gt=0.0, le=60.0)
 
+    # -- ReportMCP (stage 3): first reader is mcp_servers/report_mcp.py
+    output_dir: str = "output"
+    max_report_content_length: int = Field(default=200_000, ge=1_000, le=5_000_000)
+
+    # -- SearchMCP egress guardrail (stage 3): first reader is read_url's
+    # _assert_egress_allowed. Off by default -- flipping it is a deliberate,
+    # recorded act, per "Settings decides, not the ambient environment".
+    allow_private_network_urls: bool = False
+    max_url_redirects: int = Field(default=3, ge=0, le=10)
+
     # -- Provider selection (spec Sec 16)
     llm_provider: Provider = "openai"
     model_name: str = "gpt-4.1-mini"
