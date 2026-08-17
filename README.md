@@ -214,9 +214,9 @@ the index is built from) and `output/` (reports you approved).
 - [x] Stage 0 — kickoff: repository, standards, staged plan
 - [x] Stage 1 — RAG foundation (`ingest.py`, `retriever.py`, manifest with content hashes)
 - [x] Stage 2 — SearchMCP :8901 (3 tools + resource)
-- [ ] Stage 3 — ReportMCP :8902 (`save_report` + resource)
-- [ ] Stage 4 — the Planner's A2A server :8903
-- [ ] Stage 5 — Researcher :8904 + Critic :8905 over A2A
+- [x] Stage 3 — ReportMCP :8902 (`save_report` + resource), plus the `read_url` egress guardrail
+- [x] Stage 4 — the Planner's A2A server :8903 with its Agent Card
+- [x] Stage 5 — Researcher :8904 + Critic :8905 over A2A, plus `middleware.py` and the output-shape guardrail
 - [ ] Stage 6 — Supervisor + REPL: the loop runs over the protocols
 - [ ] Stage 7 — HITL on `save_report` + crash-safe checkpoint
 - [ ] Stage 8 — launcher, preflight, auth token

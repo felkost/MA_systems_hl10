@@ -11,6 +11,12 @@ imported (spec Sec2, "Rebuild"). The prompt-version registry is gone
 (`config.PLANNER_PROMPT`, a plain constant), and the model is built through
 `models.build_chat_model(settings, "planner")` rather than an inline
 `ChatOpenAI` (spec Sec16).
+
+**Retrofitted at stage 5** from a bare `ToolCallLimitMiddleware` to the full
+spec Sec10 stack (`middleware.a2a_agent_middleware`): the Planner reaches
+SearchMCP over the same network as the Researcher and the Critic, and leaving
+it without retries or a model-call backstop would be an asymmetry with no
+reason behind it (stage-5 kickoff, author decision).
 """
 
 from __future__ import annotations
@@ -18,7 +24,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain.agents.middleware.types import (
     AgentState,
     InputAgentState,
@@ -31,6 +36,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 import models
 from config import PLANNER_PROMPT, Settings
+from middleware import a2a_agent_middleware
 from schemas import ResearchPlan
 
 # A small, fixed reconnaissance budget -- not a Settings field, since the
@@ -81,5 +87,5 @@ def create_planner_agent(
         tools=list(tools),
         system_prompt=PLANNER_PROMPT,
         response_format=PLANNER_RESPONSE_FORMAT,
-        middleware=[ToolCallLimitMiddleware(run_limit=PLANNER_TOOL_CALL_LIMIT)],
+        middleware=a2a_agent_middleware(tool_call_limit=PLANNER_TOOL_CALL_LIMIT),
     )
