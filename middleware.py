@@ -1,11 +1,12 @@
-"""Middleware for the three A2A sub-agents (spec Sec10).
+"""Middleware for the three A2A sub-agents and the Supervisor (spec Sec10).
 
 Two classes ported near-verbatim from the hl8 donor
-(`../MA_systems_hl8_project/MA_system_hl8/middleware.py`), and one shared
-list, `a2a_agent_middleware`, assembled from `langchain.agents.middleware`
-public classes in the order spec Sec10 pins: `ModelCallLimit -> ToolCallLimit
--> ToolError -> ToolRetry -> ModelRetry`. `SaveReportGuardMiddleware` is
-Supervisor middleware and lands at stage 7, not here.
+(`../MA_systems_hl8_project/MA_system_hl8/middleware.py`), one shared list,
+`a2a_agent_middleware`, assembled from `langchain.agents.middleware` public
+classes in the order spec Sec10 pins: `ModelCallLimit -> ToolCallLimit ->
+ToolError -> ToolRetry -> ModelRetry`, and two Supervisor-only classes,
+`RoundStabilityMiddleware` (stage 6) and `SaveReportGuardMiddleware`
+(stage 7).
 
 The ordering invariant this module depends on -- `ToolErrorMiddleware` must
 sit outside `ToolRetryMiddleware`, and the retry must carry
@@ -383,4 +384,90 @@ class RoundStabilityMiddleware(
             tool_call_id=call_id,
             name=name,
             status="error",
+        )
+
+
+_SAVE_REPORT_NUDGE = (
+    "The Critic's verdict was APPROVE and no save_report call has happened "
+    "yet this run. Compose the final Markdown report and call save_report "
+    "with it now."
+)
+
+
+class SaveReportGuardMiddleware(
+    AgentMiddleware[AgentState[ResponseT], ContextT, ResponseT]
+):
+    """One-shot nudge toward `save_report` after an APPROVE the model is
+    about to leave unsaved (spec Sec10, D4/D9).
+
+    Fires only when **all four** hold on the model's about-to-end response:
+    it carries no tool calls, `state["verdict"] == "APPROVE"`, a
+    `delegate_to_critic` result exists since the most recent `HumanMessage`
+    (D5 -- not merely `state["verdict"]`, which a checkpointed thread
+    carries across questions, the same trap D6 named for
+    `RoundStabilityMiddleware`), and no `save_report` call exists since that
+    same boundary. **D9: a standing REVISE is never forced** -- a run that
+    exhausted its revision budget has no approved content, and forcing a
+    save there would ship a report its own Critic rejected.
+
+    One re-request with `tool_choice="any"`, whatever it returns. The
+    Supervisor carries no `response_format`, so it is always on the
+    plain-tools bind path -- `request.override(tool_choice=...)` is the
+    correct channel here (unlike `CriticVerificationMiddleware`'s
+    `ProviderStrategy` path, where the same field is measured to be a
+    no-op and `model_settings` must carry it instead).
+
+    Defines **both** `wrap_model_call` and `awrap_model_call` (the stage-5
+    invariant: every A2A/Supervisor invocation in production is `ainvoke`).
+    """
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
+    ) -> ModelResponse[ResponseT]:
+        response = handler(request)
+        if not self._should_nudge(request, response):
+            return response
+        return handler(self._retry_request(request))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[
+            [ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]
+        ],
+    ) -> ModelResponse[ResponseT]:
+        response = await handler(request)
+        if not self._should_nudge(request, response):
+            return response
+        return await handler(self._retry_request(request))
+
+    def _should_nudge(
+        self, request: ModelRequest[ContextT], response: ModelResponse[ResponseT]
+    ) -> bool:
+        if self._has_tool_calls(response):
+            return False
+        if request.state.get("verdict") != "APPROVE":
+            return False
+        messages = cast("list[BaseMessage]", request.state["messages"])
+        if not _run_tool_call_ids(messages, "delegate_to_critic"):
+            return False
+        if _run_tool_call_ids(messages, "save_report"):
+            return False
+        return True
+
+    @staticmethod
+    def _retry_request(request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
+        retry_messages = [
+            *request.messages,
+            HumanMessage(content=_SAVE_REPORT_NUDGE),
+        ]
+        return request.override(messages=retry_messages, tool_choice="any")
+
+    @staticmethod
+    def _has_tool_calls(response: ModelResponse[ResponseT]) -> bool:
+        return any(
+            isinstance(message, AIMessage) and bool(message.tool_calls)
+            for message in response.result
         )

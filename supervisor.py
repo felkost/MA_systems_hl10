@@ -17,8 +17,10 @@ Transport exceptions from `httpx`/`a2a.client` propagate uncaught, reaching
 `ToolRetryMiddleware` -> `ToolErrorMiddleware` exactly as MCP tool failures
 already do -- the donor's blanket `except Exception` is not ported.
 
-**D2:** `save_report` is not bound here. `create_supervisor` exposes exactly
-three tools; the write path stays structurally unreachable until stage 7.
+**D2 expired at stage 7:** `save_report` is now a fourth bound tool, gated
+by `HumanInTheLoopMiddleware` and nudged by `SaveReportGuardMiddleware` --
+both in the same commit as the binding (a commit that binds without gating
+would leave an ungated write path in history).
 
 **D7:** the three delegation tools are module-level `@tool` objects, so they
 read `load_settings()` themselves rather than closing over
@@ -30,7 +32,7 @@ read `load_settings()` themselves rather than closing over
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from a2a.client import ClientConfig, create_client
@@ -39,6 +41,7 @@ from a2a.types import Message, Role, SendMessageRequest
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     AgentState,
+    HumanInTheLoopMiddleware,
     ToolCallLimitMiddleware,
     ToolErrorMiddleware,
     ToolRetryMiddleware,
@@ -47,16 +50,21 @@ from langchain.agents.middleware.types import AgentMiddleware
 from langchain.tools import ToolRuntime
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
 from config import (
-    SUPERVISOR_FINAL_ANSWER_RULE,
     SUPERVISOR_PROMPT,
+    SUPERVISOR_SAVE_REPORT_RULE,
     Settings,
     load_settings,
 )
-from middleware import RoundStabilityMiddleware, _tool_error_to_message
+from middleware import (
+    RoundStabilityMiddleware,
+    SaveReportGuardMiddleware,
+    _tool_error_to_message,
+)
 from models import build_chat_model
 from schemas import CRITIQUE_INPUT_TEMPLATE, RESEARCH_INPUT_TEMPLATE
 
@@ -64,12 +72,16 @@ _CLIENT_TIMEOUT_SECONDS = 120.0  # stage 4/5 measured ~115.84 s per delegation
 
 
 class SupervisorState(AgentState):
-    """Extends `AgentState` with exactly two fields (D3), both with an
-    immediate consumer: written only by `delegate_to_critic` via
-    `Command(update=...)`, read only by `RoundStabilityMiddleware`."""
+    """Extends `AgentState` with three fields, each with an immediate
+    consumer, all written only by `delegate_to_critic` via
+    `Command(update=...)`: `critic_gaps`/`previous_critic_gaps` (D3, read by
+    `RoundStabilityMiddleware`) and `verdict` (stage 7, read by
+    `SaveReportGuardMiddleware` -- the machine-readable decision point spec
+    Sec9 requires, never parsed from rendered prose)."""
 
     critic_gaps: list[str] | None
     previous_critic_gaps: list[str] | None
+    verdict: Literal["APPROVE", "REVISE"] | None
 
 
 class SubAgentResponseError(Exception):
@@ -208,15 +220,20 @@ async def delegate_to_critic(findings: str, runtime: ToolRuntime) -> str | Comma
             ],
             "critic_gaps": gaps,
             "previous_critic_gaps": runtime.state.get("critic_gaps"),
+            "verdict": critique.get("verdict"),
         }
     )
 
 
 def create_supervisor(
-    settings: Settings | None = None, *, model: BaseChatModel | None = None
+    settings: Settings | None = None,
+    *,
+    model: BaseChatModel | None = None,
+    checkpointer: BaseCheckpointSaver[Any],
+    save_report_tool: BaseTool,
 ) -> Any:
-    """Build the Supervisor agent: three delegation tools, no `save_report`
-    (D2), five middleware entries in spec order.
+    """Build the Supervisor agent: four tools (stage 7 binds `save_report`),
+    seven middleware entries in spec order, a durable checkpoint.
 
     Parameters
     ----------
@@ -226,6 +243,14 @@ def create_supervisor(
         delegation tools themselves (D7) -- they call `load_settings()`.
     model : BaseChatModel, optional
         Overrides the model `models.build_chat_model` would otherwise build.
+    checkpointer : BaseCheckpointSaver
+        Required (D1): the write-path-free, checkpointer-free configuration
+        was stage 6's artefact, not a supported mode. `main.py` owns its
+        lifetime -- `AsyncSqliteSaver.from_conn_string` is an
+        `asynccontextmanager`, so this function never constructs one itself.
+    save_report_tool : BaseTool
+        Required (D1): the ReportMCP tool, loaded by `main.py` via
+        `mcp_utils.load_report_tools` before this call.
 
     Returns
     -------
@@ -234,7 +259,7 @@ def create_supervisor(
     settings = settings or load_settings()
     chat_model = model or build_chat_model(settings, "supervisor")
     prompt = SUPERVISOR_PROMPT.format(
-        extra_tools="", final_step_rule=SUPERVISOR_FINAL_ANSWER_RULE
+        extra_tools=", save_report", final_step_rule=SUPERVISOR_SAVE_REPORT_RULE
     )
     supervisor_middleware: list[AgentMiddleware[Any, Any, Any]] = [
         ToolCallLimitMiddleware(
@@ -250,11 +275,23 @@ def create_supervisor(
         ToolErrorMiddleware(_tool_error_to_message),
         ToolRetryMiddleware(on_failure="error", jitter=True),
         RoundStabilityMiddleware(),
+        SaveReportGuardMiddleware(),
+        HumanInTheLoopMiddleware(
+            interrupt_on={
+                "save_report": {"allowed_decisions": ["approve", "edit", "reject"]}
+            }
+        ),
     ]
     return create_agent(
         model=chat_model,
-        tools=[delegate_to_planner, delegate_to_researcher, delegate_to_critic],
+        tools=[
+            delegate_to_planner,
+            delegate_to_researcher,
+            delegate_to_critic,
+            save_report_tool,
+        ],
         system_prompt=prompt,
         state_schema=SupervisorState,
         middleware=supervisor_middleware,
+        checkpointer=checkpointer,
     )

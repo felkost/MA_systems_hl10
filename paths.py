@@ -71,3 +71,27 @@ def log_path(service: str, log_dir: str | Path = "logs") -> Path:
         `manifest_path`/`corpus_path` already use for `index_dir`.
     """
     return resolve(log_dir) / f"{service}.log"
+
+
+def checkpoint_path(db: str | Path) -> Path:
+    """Locate the crash-safe checkpoint database, creating its parent
+    directory if missing.
+
+    Parameters
+    ----------
+    db : str or Path
+        Value of `Settings.checkpoint_db`.
+
+    Returns
+    -------
+    Path
+
+    Notes
+    -----
+    `AsyncSqliteSaver.from_conn_string` does not create missing parent
+    directories itself -- a fresh checkout's gitignored `runtime/` must
+    exist before the first connection, or the very first session fails.
+    """
+    result = resolve(db)
+    result.parent.mkdir(parents=True, exist_ok=True)
+    return result

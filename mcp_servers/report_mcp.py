@@ -126,8 +126,9 @@ def _resolve_inside_output(filename: str, output_root: Path) -> Path:
 )
 def save_report(filename: str, content: str) -> str:
     """Save `content` as a Markdown report named `filename` (`.md` appended
-    if omitted). Refuses to overwrite an existing report -- pick a
-    different name if this one is taken."""
+    if omitted), with a local creation timestamp (`YYYYMMDD-HHMM-`)
+    prepended to the file actually written. Refuses to overwrite an
+    existing report -- pick a different name if this one is taken."""
     _logger.info("save_report filename=%r", filename)
     settings = load_settings()
     output_root = paths.resolve(settings.output_dir)
@@ -137,6 +138,13 @@ def save_report(filename: str, content: str) -> str:
     except ReportPathError as error:
         _logger.warning("save_report filename=%r refused: %s", filename, error)
         return f"ERROR: {error}"
+
+    # The timestamp is prepended to the already-validated, already-`.md`
+    # name -- never to the untrusted `filename` before confinement -- so
+    # every refusal above still runs against exactly what the model
+    # supplied, and `target.with_name` only swaps the final path component
+    # within the same already-resolved, already-confined parent.
+    target = target.with_name(f"{datetime.now():%Y%m%d-%H%M}-{target.name}")
 
     if len(content) > settings.max_report_content_length:
         _logger.warning(
