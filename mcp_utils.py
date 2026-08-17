@@ -19,7 +19,9 @@ would only convert this project's `isError`-free results into
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -75,3 +77,35 @@ async def load_agent_tools(
             f"SearchMCP does not offer {missing!r} -- it offers {sorted(by_name)}"
         )
     return [by_name[name] for name in allowlist]
+
+
+async def read_resource(*, url: str, uri: str) -> dict[str, Any]:
+    """Read one MCP resource and decode it as JSON.
+
+    Parameters
+    ----------
+    url : str
+        The server's Streamable HTTP endpoint, e.g. `settings.search_mcp_url()`
+        or `settings.report_mcp_url()`. Taken as an argument rather than
+        derived from `Settings` plus a server name: the caller (`main.py`) is
+        where the choice of server belongs.
+    uri : str
+        The resource URI, e.g. `"resource://knowledge-base-stats"`.
+
+    Returns
+    -------
+    dict of str to Any
+        The resource's JSON content.
+
+    Notes
+    -----
+    Both of this project's resources report `mimeType="text/plain"` even
+    though their content is JSON (measured against FastMCP 3.4.7's source,
+    stage-6 kickoff) -- decoding is unconditional, never branching on
+    `mimeType`.
+    """
+    client = MultiServerMCPClient(
+        {"target": StreamableHttpConnection(transport="streamable_http", url=url)}
+    )
+    blobs = await client.get_resources("target", uris=uri)
+    return dict(json.loads(blobs[0].as_string()))

@@ -69,6 +69,16 @@ class Settings(BaseSettings):
 
     max_revisions: int = Field(default=2, ge=1, le=3)
 
+    # -- Supervisor / REPL (stage 6): first reader is supervisor.py / main.py.
+    # Worst case at the default max_revisions=2: 1 Planner call + up to 3
+    # Researcher rounds + up to 3 Critic rounds = 7 real delegations. At
+    # stage 4/5's measured ~115 s per delegation that sums to ~800 s; 1200 s
+    # leaves real margin above the realistic (not pathological) worst case,
+    # so this stays a "something is stuck" signal rather than a false trip
+    # on a slow but working full-revision run.
+    recursion_limit: int = Field(default=100, ge=2, le=200)
+    supervisor_run_timeout_seconds: int = Field(default=1200, ge=60, le=1800)
+
     # -- Researcher / Critic agent budgets (stage 5): ported from the hl8
     # donor with the same defaults and bounds. The Planner's own budget (4)
     # stays a module constant in agents/planner.py -- experiments (stage 11)
@@ -174,6 +184,32 @@ class Settings(BaseSettings):
             string.
         """
         return f"http://127.0.0.1:{self.search_mcp_port}/mcp"
+
+    def report_mcp_url(self) -> str:
+        """ReportMCP's Streamable HTTP endpoint, same mount path as
+        `search_mcp_url()`."""
+        return f"http://127.0.0.1:{self.report_mcp_port}/mcp"
+
+    def planner_a2a_url(self) -> str:
+        """The Planner's bare origin.
+
+        Returns
+        -------
+        str
+            `http://127.0.0.1:<planner_a2a_port>` -- no path suffix, matching
+            `AgentInterface.url`'s published shape (stage-6 audit G);
+            `create_client`/`A2ACardResolver` append the RPC and well-known
+            paths themselves.
+        """
+        return f"http://127.0.0.1:{self.planner_a2a_port}"
+
+    def researcher_a2a_url(self) -> str:
+        """The Researcher's bare origin. See `planner_a2a_url`."""
+        return f"http://127.0.0.1:{self.researcher_a2a_port}"
+
+    def critic_a2a_url(self) -> str:
+        """The Critic's bare origin. See `planner_a2a_url`."""
+        return f"http://127.0.0.1:{self.critic_a2a_port}"
 
     @field_validator(*_BLANK_MEANS_UNSET_FIELDS, mode="before")
     @classmethod
@@ -385,7 +421,7 @@ coordinating three specialised sub-agents through tool calls: a Planner, a
 Researcher, and a Critic.
 
 Tools available to you: delegate_to_planner, delegate_to_researcher,
-delegate_to_critic, save_report.
+delegate_to_critic{extra_tools}.
 
 Coordination rules:
 1. Always start by calling delegate_to_planner with the user's request, to
@@ -397,16 +433,7 @@ Coordination rules:
    findings -- up to the configured number of revision rounds. If a call is
    blocked because that limit was reached, stop revising and move on with
    whatever findings you already have.
-5. Every run must end with a save_report call. Once the verdict is
-   APPROVE, or you have stopped revising for any reason, compose the final
-   Markdown report yourself and call save_report directly with it -- do
-   not ask the user for permission in chat first. The save_report call is
-   already gated by a human approval step outside this conversation, so
-   asking in chat first only makes the human approve the same write twice.
-   Never end your turn with a summary instead of that call: the report
-   only exists once save_report has been called, and a human still
-   approves the write before anything reaches disk, so calling it is a
-   request, not a commitment.
+{final_step_rule}
 
 What each sub-agent can and cannot see: the Planner sees only the user's
 request. The Researcher sees only the plan or the revision feedback you
@@ -415,3 +442,19 @@ Critic sees the original user request and the current findings, forwarded
 explicitly by you, never your own paraphrase of either. None of the three
 sub-agents sees the others' reasoning, tool calls, or intermediate
 messages -- only what you pass as the argument to their tool."""
+
+SUPERVISOR_FINAL_ANSWER_RULE = """5. Once the verdict is APPROVE, or you have
+   stopped revising for any reason, compose the final Markdown report
+   yourself and return it as your answer. This configuration has no save
+   tool: your answer is the report."""
+
+SUPERVISOR_SAVE_REPORT_RULE = """5. Every run must end with a save_report
+   call. Once the verdict is APPROVE, or you have stopped revising for any
+   reason, compose the final Markdown report yourself and call save_report
+   directly with it -- do not ask the user for permission in chat first. The
+   save_report call is already gated by a human approval step outside this
+   conversation, so asking in chat first only makes the human approve the
+   same write twice. Never end your turn with a summary instead of that
+   call: the report only exists once save_report has been called, and a
+   human still approves the write before anything reaches disk, so calling
+   it is a request, not a commitment."""

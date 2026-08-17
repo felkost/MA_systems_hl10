@@ -288,3 +288,99 @@ def a2a_agent_middleware(
         ToolRetryMiddleware(on_failure="error", jitter=True),
         ModelRetryMiddleware(),
     ]
+
+
+_STABILITY_TOOLS = frozenset({"delegate_to_researcher", "delegate_to_critic"})
+
+
+def _tool_results(messages: list[BaseMessage], call_ids: list[str]) -> list[str]:
+    """The `ToolMessage` content for each id in `call_ids`, in that order.
+
+    Ids with no matching `ToolMessage` (e.g. a `Command`-returning tool that
+    wrote no visible message this round) are skipped, so the caller sees only
+    the results that actually exist to compare.
+    """
+    by_id = {
+        message.tool_call_id: str(message.content)
+        for message in messages
+        if isinstance(message, ToolMessage)
+    }
+    return [by_id[call_id] for call_id in call_ids if call_id in by_id]
+
+
+class RoundStabilityMiddleware(
+    AgentMiddleware[AgentState[ResponseT], ContextT, ResponseT]
+):
+    """Two deterministic stop signals beyond the Supervisor's iteration
+    counter (spec Sec6 amendment 2026-08-16, D4): *signal repetition* --
+    `delegate_to_critic` refused once `state["critic_gaps"]` repeats
+    `state["previous_critic_gaps"]` -- and *candidate stability* --
+    `delegate_to_researcher` refused once its last two results in this run
+    are byte-identical. Both compare the **structured** field or the raw
+    tool result, never rendered prose, since `render_critique(...)`'s text
+    can vary round to round even when the underlying gap does not.
+
+    **D6 -- run-scoped, not thread-scoped.** `critic_gaps`/
+    `previous_critic_gaps` survive across questions in one checkpointed
+    `thread_id` (the Supervisor's REPL reuses one thread per session), so a
+    comparison only fires once *this run* has produced at least two prior
+    calls to the tool in question (`_run_tool_call_ids`, "since the most
+    recent `HumanMessage`") -- state left over from an earlier question can
+    never trigger a refusal on the first call of a new one.
+    """
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        refusal = self._refusal(request)
+        if refusal is not None:
+            return refusal
+        return handler(request)
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        refusal = self._refusal(request)
+        if refusal is not None:
+            return refusal
+        return await handler(request)
+
+    def _refusal(self, request: ToolCallRequest) -> ToolMessage | None:
+        name = request.tool_call["name"]
+        if name not in _STABILITY_TOOLS:
+            return None
+
+        messages = cast(list[BaseMessage], request.state["messages"])
+        call_id = request.tool_call["id"]
+        prior = [
+            prior_id
+            for prior_id in _run_tool_call_ids(messages, name)
+            if prior_id != call_id
+        ]
+        if len(prior) < 2:
+            return None
+
+        if name == "delegate_to_critic":
+            gaps = request.state.get("critic_gaps")
+            if gaps is None or gaps != request.state.get("previous_critic_gaps"):
+                return None
+            reason = "the Critic's gaps repeated the previous round's exactly"
+        else:
+            last_two = _tool_results(messages, prior[-2:])
+            if len(last_two) < 2 or last_two[0] != last_two[1]:
+                return None
+            reason = "the Researcher's findings repeated the previous round's exactly"
+
+        return ToolMessage(
+            content=(
+                f"ERROR: {name} call refused -- {reason}, so another round "
+                "cannot discover anything new. Move on with what you have."
+            ),
+            tool_call_id=call_id,
+            name=name,
+            status="error",
+        )

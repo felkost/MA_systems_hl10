@@ -79,6 +79,10 @@ RESEARCH_INPUT_TEMPLATE = (
     "Original request: {request}\n\nYour task for this round:\n{task}"
 )
 
+CRITIQUE_INPUT_TEMPLATE = (
+    "Original request: {request}\n\nFindings to verify:\n{findings}"
+)
+
 
 def render_plan(plan: ResearchPlan) -> str:
     """Render a `ResearchPlan` as compact markdown for the Supervisor.
