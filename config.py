@@ -30,6 +30,7 @@ _BLANK_MEANS_UNSET_FIELDS = (
     "judge_model_name",
     "openai_api_key",
     "openrouter_api_key",
+    "max_read_url_per_search",
 )
 
 
@@ -67,6 +68,16 @@ class Settings(BaseSettings):
     mcp_a2a_shared_token: SecretStr | None = None
 
     max_revisions: int = Field(default=2, ge=1, le=3)
+
+    # -- Researcher / Critic agent budgets (stage 5): ported from the hl8
+    # donor with the same defaults and bounds. The Planner's own budget (4)
+    # stays a module constant in agents/planner.py -- experiments (stage 11)
+    # vary these two, not that one.
+    researcher_max_tool_calls: int = Field(default=8, ge=1, le=50)
+    critic_max_tool_calls: int = Field(default=5, ge=1, le=50)
+    # Pages read_url may open before the next search, enforced by
+    # ReadUrlCapMiddleware on the Researcher. None removes the cap.
+    max_read_url_per_search: int | None = Field(default=2, ge=1, le=10)
 
     # -- RAG / retrieval (ingest.py, retriever.py)
     data_dir: str = "data"
@@ -362,6 +373,12 @@ return "REVISE" instead -- never an APPROVE alongside an unresolved gap, and
 never a REVISE alongside three True booleans and nothing left to fix. When
 you return REVISE, give concrete revision_requests the Researcher can act
 on."""
+
+CRITIC_VERIFICATION_INSTRUCTION = (
+    "You returned a verdict without calling web_search, read_url or "
+    "knowledge_search this turn. Verify at least one factual claim from the "
+    "findings using one of those tools, then return your verdict."
+)
 
 SUPERVISOR_PROMPT = """You are the Supervisor of a multi-agent research system,
 coordinating three specialised sub-agents through tool calls: a Planner, a
