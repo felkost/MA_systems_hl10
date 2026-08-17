@@ -113,6 +113,11 @@ class Settings(BaseSettings):
     output_dir: str = "output"
     max_report_content_length: int = Field(default=200_000, ge=1_000, le=5_000_000)
 
+    # -- HITL / crash-safe checkpoint (stage 7): first reader is main.py.
+    # `paths.checkpoint_path` resolves and creates the parent directory;
+    # `runtime/` is gitignored, the same as `logs/`.
+    checkpoint_db: str = "runtime/checkpoints.sqlite"
+
     # -- SearchMCP egress guardrail (stage 3): first reader is read_url's
     # _assert_egress_allowed. Off by default -- flipping it is a deliberate,
     # recorded act, per "Settings decides, not the ambient environment".
@@ -443,11 +448,6 @@ explicitly by you, never your own paraphrase of either. None of the three
 sub-agents sees the others' reasoning, tool calls, or intermediate
 messages -- only what you pass as the argument to their tool."""
 
-SUPERVISOR_FINAL_ANSWER_RULE = """5. Once the verdict is APPROVE, or you have
-   stopped revising for any reason, compose the final Markdown report
-   yourself and return it as your answer. This configuration has no save
-   tool: your answer is the report."""
-
 SUPERVISOR_SAVE_REPORT_RULE = """5. Every run must end with a save_report
    call. Once the verdict is APPROVE, or you have stopped revising for any
    reason, compose the final Markdown report yourself and call save_report
@@ -457,4 +457,8 @@ SUPERVISOR_SAVE_REPORT_RULE = """5. Every run must end with a save_report
    same write twice. Never end your turn with a summary instead of that
    call: the report only exists once save_report has been called, and a
    human still approves the write before anything reaches disk, so calling
-   it is a request, not a commitment."""
+   it is a request, not a commitment. Preserve every citation the findings
+   already contain -- a source name, a URL, or a knowledge-base page --
+   instead of compressing them away when you write the final report: a
+   report with no citations cannot be checked against what was actually
+   researched."""

@@ -38,6 +38,48 @@ class MissingToolError(Exception):
     """
 
 
+async def _load_tools(
+    url: str, allowlist: Sequence[str], *, connection_key: str, label: str
+) -> list[BaseTool]:
+    """Connect to one MCP server and return exactly the tools `allowlist`
+    names, in that order. Shared by `load_agent_tools` (SearchMCP) and
+    `load_report_tools` (ReportMCP, stage 7) -- the allowlist mechanism and
+    the transport-vs-tool error split are the same for both servers.
+
+    Parameters
+    ----------
+    url : str
+        The server's Streamable HTTP endpoint.
+    allowlist : Sequence of str
+        Tool names expected to exist.
+    connection_key : str
+        The `MultiServerMCPClient` connections dict key, e.g. `"search"`.
+    label : str
+        Human-readable server name for the `MissingToolError` message.
+
+    Raises
+    ------
+    MissingToolError
+        `allowlist` names a tool the server does not offer.
+    """
+    client = MultiServerMCPClient(
+        {
+            connection_key: StreamableHttpConnection(
+                transport="streamable_http", url=url
+            )
+        },
+        handle_tool_errors=True,
+    )
+    by_name = {tool.name: tool for tool in await client.get_tools()}
+
+    missing = [name for name in allowlist if name not in by_name]
+    if missing:
+        raise MissingToolError(
+            f"{label} does not offer {missing!r} -- it offers {sorted(by_name)}"
+        )
+    return [by_name[name] for name in allowlist]
+
+
 async def load_agent_tools(
     settings: Settings, allowlist: Sequence[str]
 ) -> list[BaseTool]:
@@ -61,22 +103,39 @@ async def load_agent_tools(
     MissingToolError
         `allowlist` names a tool SearchMCP does not offer.
     """
-    client = MultiServerMCPClient(
-        {
-            "search": StreamableHttpConnection(
-                transport="streamable_http", url=settings.search_mcp_url()
-            )
-        },
-        handle_tool_errors=True,
+    return await _load_tools(
+        settings.search_mcp_url(), allowlist, connection_key="search", label="SearchMCP"
     )
-    by_name = {tool.name: tool for tool in await client.get_tools()}
 
-    missing = [name for name in allowlist if name not in by_name]
-    if missing:
-        raise MissingToolError(
-            f"SearchMCP does not offer {missing!r} -- it offers {sorted(by_name)}"
-        )
-    return [by_name[name] for name in allowlist]
+
+async def load_report_tools(settings: Settings) -> BaseTool:
+    """Load ReportMCP's one tool, `save_report` (stage 7, audit item A4).
+
+    `load_agent_tools` hard-codes a connection at `search_mcp_url()`, so it
+    cannot reach ReportMCP -- this is the second loader that gives the
+    Supervisor's `save_report_tool` argument a source other than a live
+    server call inline in `main.py`.
+
+    Parameters
+    ----------
+    settings : Settings
+
+    Returns
+    -------
+    BaseTool
+
+    Raises
+    ------
+    MissingToolError
+        ReportMCP does not offer `save_report`.
+    """
+    tools = await _load_tools(
+        settings.report_mcp_url(),
+        ("save_report",),
+        connection_key="report",
+        label="ReportMCP",
+    )
+    return tools[0]
 
 
 async def read_resource(*, url: str, uri: str) -> dict[str, Any]:

@@ -218,7 +218,7 @@ the index is built from) and `output/` (reports you approved).
 - [x] Stage 4 — the Planner's A2A server :8903 with its Agent Card
 - [x] Stage 5 — Researcher :8904 + Critic :8905 over A2A, plus `middleware.py` and the output-shape guardrail
 - [x] Stage 6 — Supervisor + REPL: Plan → Research → Critique over the protocols, `save_report` not yet bound
-- [ ] Stage 7 — HITL on `save_report` + crash-safe checkpoint
+- [x] Stage 7 — HITL on `save_report` + crash-safe checkpoint (`AsyncSqliteSaver`, `--thread` resume)
 - [ ] Stage 8 — launcher, preflight, auth token
 - [ ] Stage 9 — Langfuse + OpenTelemetry: one question, one trace
 - [ ] Stage 10 — evaluation: golden dataset, LLM judge, statistics
