@@ -62,13 +62,6 @@ class CritiqueResult(BaseModel):
     )
 
 
-class ReportDraft(BaseModel):
-    """A report ready to hand to `save_report`."""
-
-    filename: str = Field(description="Name for the saved report file")
-    content: str = Field(description="Markdown content of the report")
-
-
 # Shared by both coordination paths' Researcher input: the Supervisor's
 # delegation wrapper paraphrases the user's request into a plan or a
 # revision task, and a paraphrase drops whatever the coordinator did not

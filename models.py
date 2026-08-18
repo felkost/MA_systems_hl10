@@ -4,9 +4,12 @@ resolved (provider, model) pair points to.
 `config.py` owns the resolution formula (`Settings.resolved`) because it
 sits a layer below this module (kernel, versus this module's infra) and
 therefore cannot depend on it; this module is the one place that turns a
-resolved pair into a real client. The model-capability preflight helper the
-architecture table also assigns here is not written yet -- it needs a
-network call and belongs to stage 8.
+resolved pair into a real client. `assert_structured_output_supported`
+(stage 8, spec Sec16) is the model-capability preflight helper the
+architecture table assigns here -- one request to OpenRouter's model
+listing, only for the two roles that actually need strict structured
+output (`agents/planner.py`, `agents/critic.py`; `agents/research.py`
+explicitly carries none).
 
 `langchain_huggingface` is imported inside `build_embeddings`, not at module
 scope: importing it eagerly pulls in `sentence_transformers`, the same cost
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -28,6 +32,13 @@ import paths
 from config import Settings
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# The two roles whose agent builds ProviderStrategy(..., strict=True)
+# (agents/planner.py:53, agents/critic.py:44, both unconditional module-level
+# constants) -- hardcoded rather than introspected from agents/*.py, since
+# this module sits below agents/ in the layer table and must not import
+# upward.
+_STRUCTURED_OUTPUT_ROLES = ("planner", "critic")
 
 
 def resolve_model(settings: Settings, role: str) -> tuple[str, str]:
@@ -121,3 +132,70 @@ def embedding_fingerprint(settings: Settings) -> dict[str, Any]:
         "model": settings.embedding_model,
         "dimensions": settings.embedding_dimensions,
     }
+
+
+class UnsupportedStructuredOutputError(Exception):
+    """`role` needs strict structured output but the resolved OpenRouter
+    model does not report support for it -- named explicitly (spec Sec16),
+    never a silent downgrade to best-effort parsing."""
+
+
+async def assert_structured_output_supported(settings: Settings, role: str) -> None:
+    """Refuse if `role` cannot actually get the structured output its agent
+    requires from the model it resolves to (spec Sec16 preflight).
+
+    No-op outside `{"planner", "critic"}` -- the only roles whose agent
+    builds `ProviderStrategy(..., strict=True)`. No-op for provider
+    `"openai"`: strict JSON-schema mode is a stable capability of every
+    OpenAI model family this project resolves to, with no public per-model
+    capability listing the way OpenRouter's is. For provider `"openrouter"`,
+    fetches the model catalog once and refuses, naming the model, if it is
+    absent or does not report `"structured_outputs"` support.
+
+    Raises
+    ------
+    UnsupportedStructuredOutputError
+    """
+    if role not in _STRUCTURED_OUTPUT_ROLES:
+        return
+    provider, model = settings.resolved(role)
+    if provider != "openrouter":
+        return
+
+    catalog = await _fetch_openrouter_models(settings)
+    entry = catalog.get(model)
+    if entry is None:
+        raise UnsupportedStructuredOutputError(
+            f"role {role!r} resolves to OpenRouter model {model!r}, which "
+            f"does not appear in OpenRouter's model listing -- check "
+            f"{role.upper()}_MODEL_NAME"
+        )
+    if not _supports_structured_output(entry):
+        raise UnsupportedStructuredOutputError(
+            f"role {role!r} resolves to OpenRouter model {model!r}, which "
+            f"does not report support for strict structured output -- pick "
+            f"a different {role.upper()}_MODEL_NAME"
+        )
+
+
+async def _fetch_openrouter_models(settings: Settings) -> dict[str, dict[str, Any]]:
+    """`{model_id: entry}` for OpenRouter's full catalog -- one request, no
+    auth required for the listing itself (verified live, 2026-08-18)."""
+    headers: dict[str, str] = {}
+    if settings.openrouter_api_key is not None:
+        headers["Authorization"] = (
+            f"Bearer {settings.openrouter_api_key.get_secret_value()}"
+        )
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(f"{OPENROUTER_BASE_URL}/models", headers=headers)
+        response.raise_for_status()
+    return {entry["id"]: entry for entry in response.json()["data"]}
+
+
+def _supports_structured_output(entry: dict[str, Any]) -> bool:
+    """`"structured_outputs"` only -- confirmed against the live catalog
+    (2026-08-18, 414 entries): `"response_format"` is a *looser* JSON-mode
+    capability present on 30 models that do NOT also carry
+    `"structured_outputs"` (e.g. qwen/qwen3.7-flash) -- ORing the two would
+    silently accept a model that cannot honour `strict=True`."""
+    return "structured_outputs" in entry.get("supported_parameters", [])

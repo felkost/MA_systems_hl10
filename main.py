@@ -36,6 +36,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
 import hitl
+import models
+from auth import auth_headers
 from config import Settings, load_settings
 from mcp_utils import load_report_tools, read_resource
 from models import resolved_map
@@ -99,10 +101,13 @@ async def _preflight(settings: Settings) -> dict[str, Any]:
         ("no index yet", an empty `output/`), which is a *successful* fetch.
     """
     results: dict[str, Any] = {}
+    headers = auth_headers(settings)
 
     try:
         results["search_stats"] = await read_resource(
-            url=settings.search_mcp_url(), uri="resource://knowledge-base-stats"
+            url=settings.search_mcp_url(),
+            uri="resource://knowledge-base-stats",
+            headers=headers,
         )
     except Exception as error:
         raise PreflightError(
@@ -112,7 +117,7 @@ async def _preflight(settings: Settings) -> dict[str, Any]:
 
     try:
         results["output_dir"] = await read_resource(
-            url=settings.report_mcp_url(), uri="resource://output-dir"
+            url=settings.report_mcp_url(), uri="resource://output-dir", headers=headers
         )
     except Exception as error:
         raise PreflightError(
@@ -133,7 +138,7 @@ async def _preflight(settings: Settings) -> dict[str, Any]:
         ("Researcher", settings.researcher_a2a_url(), "researcher"),
         ("Critic", settings.critic_a2a_url(), "critic"),
     )
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=headers) as client:
         for name, url, argv in agents:
             try:
                 await A2ACardResolver(client, url).get_agent_card()
@@ -142,6 +147,12 @@ async def _preflight(settings: Settings) -> dict[str, Any]:
                     f"{name} is not reachable at {url} -- start it with "
                     f"`python a2a_servers.py {argv}`"
                 ) from error
+
+    for role in ("planner", "critic"):
+        try:
+            await models.assert_structured_output_supported(settings, role)
+        except models.UnsupportedStructuredOutputError as error:
+            raise PreflightError(str(error)) from error
 
     results["provider_map"] = resolved_map(settings)
     return results

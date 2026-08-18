@@ -50,6 +50,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 import observability  # noqa: E402
 import paths  # noqa: E402
 import retriever  # noqa: E402
+from auth import build_token_verifier  # noqa: E402
 from config import Settings, load_settings  # noqa: E402
 
 UNTRUSTED_CONTENT_PREAMBLE = (
@@ -316,6 +317,7 @@ def knowledge_base_stats() -> dict[str, Any]:
 def main() -> None:
     settings = load_settings()
     observability.configure_logging("search_mcp")
+    mcp.auth = build_token_verifier(settings)
     mcp.run(transport="http", host="127.0.0.1", port=settings.search_mcp_port)
 
 

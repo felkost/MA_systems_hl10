@@ -27,6 +27,7 @@ from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 
+from auth import auth_headers
 from config import Settings
 
 
@@ -39,7 +40,12 @@ class MissingToolError(Exception):
 
 
 async def _load_tools(
-    url: str, allowlist: Sequence[str], *, connection_key: str, label: str
+    url: str,
+    allowlist: Sequence[str],
+    *,
+    connection_key: str,
+    label: str,
+    settings: Settings,
 ) -> list[BaseTool]:
     """Connect to one MCP server and return exactly the tools `allowlist`
     names, in that order. Shared by `load_agent_tools` (SearchMCP) and
@@ -56,6 +62,9 @@ async def _load_tools(
         The `MultiServerMCPClient` connections dict key, e.g. `"search"`.
     label : str
         Human-readable server name for the `MissingToolError` message.
+    settings : Settings
+        Source of the shared bearer token attached to this connection
+        (stage 8); `auth_headers` returns `{}` when unset.
 
     Raises
     ------
@@ -65,7 +74,7 @@ async def _load_tools(
     client = MultiServerMCPClient(
         {
             connection_key: StreamableHttpConnection(
-                transport="streamable_http", url=url
+                transport="streamable_http", url=url, headers=auth_headers(settings)
             )
         },
         handle_tool_errors=True,
@@ -104,7 +113,11 @@ async def load_agent_tools(
         `allowlist` names a tool SearchMCP does not offer.
     """
     return await _load_tools(
-        settings.search_mcp_url(), allowlist, connection_key="search", label="SearchMCP"
+        settings.search_mcp_url(),
+        allowlist,
+        connection_key="search",
+        label="SearchMCP",
+        settings=settings,
     )
 
 
@@ -134,11 +147,14 @@ async def load_report_tools(settings: Settings) -> BaseTool:
         ("save_report",),
         connection_key="report",
         label="ReportMCP",
+        settings=settings,
     )
     return tools[0]
 
 
-async def read_resource(*, url: str, uri: str) -> dict[str, Any]:
+async def read_resource(
+    *, url: str, uri: str, headers: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Read one MCP resource and decode it as JSON.
 
     Parameters
@@ -150,6 +166,10 @@ async def read_resource(*, url: str, uri: str) -> dict[str, Any]:
         where the choice of server belongs.
     uri : str
         The resource URI, e.g. `"resource://knowledge-base-stats"`.
+    headers : dict of str to str, optional
+        Extra request headers, e.g. `auth.auth_headers(settings)` (stage 8).
+        This function stays settings-agnostic for the same reason `url`
+        does -- the caller states its own intent.
 
     Returns
     -------
@@ -164,7 +184,11 @@ async def read_resource(*, url: str, uri: str) -> dict[str, Any]:
     `mimeType`.
     """
     client = MultiServerMCPClient(
-        {"target": StreamableHttpConnection(transport="streamable_http", url=url)}
+        {
+            "target": StreamableHttpConnection(
+                transport="streamable_http", url=url, headers=headers
+            )
+        }
     )
     blobs = await client.get_resources("target", uris=uri)
     return dict(json.loads(blobs[0].as_string()))

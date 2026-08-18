@@ -110,14 +110,21 @@ python servers.py                    # start both MCP and all three A2A servers
 python main.py                       # the REPL, in a second terminal
 ```
 
-Or start each server yourself, as the assignment prescribes:
+Or start each server yourself, as the assignment prescribes — one terminal
+each, **the two MCP servers first**: each A2A agent checks SearchMCP at
+startup and refuses to serve if it cannot reach it.
 
 ```bash
 python mcp_servers/search_mcp.py     # port 8901
 python mcp_servers/report_mcp.py     # port 8902
-python a2a_servers.py                # ports 8903, 8904, 8905
+python a2a_servers.py planner        # port 8903
+python a2a_servers.py researcher     # port 8904
+python a2a_servers.py critic         # port 8905
 python main.py
 ```
+
+All five servers verify the same `MCP_A2A_SHARED_TOKEN` from `.env` and
+refuse to start without one, whichever way you launch them.
 
 ## Configuration: providers and models
 
@@ -190,8 +197,9 @@ than answering from vectors of another embedding space — rebuild it with
 
 ## Cleanup
 
-Stop the REPL and the servers with `Ctrl+C` — `servers.py` shuts its three
-children down with it. Then, in order of how much you want gone:
+Stop the REPL and the servers with `Ctrl+C` — `servers.py` shuts all five
+children down with it, and stops the rest itself if any one of them dies.
+Then, in order of how much you want gone:
 
 ```bash
 docker compose down                  # stop Langfuse, keep its traces
@@ -219,7 +227,7 @@ the index is built from) and `output/` (reports you approved).
 - [x] Stage 5 — Researcher :8904 + Critic :8905 over A2A, plus `middleware.py` and the output-shape guardrail
 - [x] Stage 6 — Supervisor + REPL: Plan → Research → Critique over the protocols, `save_report` not yet bound
 - [x] Stage 7 — HITL on `save_report` + crash-safe checkpoint (`AsyncSqliteSaver`, `--thread` resume)
-- [ ] Stage 8 — launcher, preflight, auth token
+- [x] Stage 8 — launcher (`servers.py`), startup preflight, shared bearer token on all five servers
 - [ ] Stage 9 — Langfuse + OpenTelemetry: one question, one trace
 - [ ] Stage 10 — evaluation: golden dataset, LLM judge, statistics
 - [ ] Stage 11 — final report (EN/UA)

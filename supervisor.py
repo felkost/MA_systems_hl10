@@ -54,6 +54,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
+from auth import auth_headers
 from config import (
     SUPERVISOR_PROMPT,
     SUPERVISOR_SAVE_REPORT_RULE,
@@ -117,7 +118,9 @@ def _current_request(messages: list[BaseMessage]) -> str:
     return request
 
 
-async def _send_and_get_message(url: str, text: str) -> Message:
+async def _send_and_get_message(
+    url: str, text: str, *, headers: dict[str, str] | None = None
+) -> Message:
     """Send `text` to the agent at `url` and return its reply `Message`.
 
     Parameters
@@ -126,6 +129,11 @@ async def _send_and_get_message(url: str, text: str) -> Message:
         A bare A2A origin, e.g. `settings.planner_a2a_url()`.
     text : str
         The message text, already rendered through the caller's template.
+    headers : dict of str to str, optional
+        Extra request headers, e.g. `auth.auth_headers(settings)` (stage 8).
+        Omitted (`None`, the default) it stays absent -- the same
+        settings-agnostic shape `mcp_utils.read_resource`'s own `headers`
+        parameter uses.
 
     Returns
     -------
@@ -151,7 +159,9 @@ async def _send_and_get_message(url: str, text: str) -> Message:
     async with await create_client(
         url,
         client_config=ClientConfig(
-            httpx_client=httpx.AsyncClient(timeout=_CLIENT_TIMEOUT_SECONDS)
+            httpx_client=httpx.AsyncClient(
+                timeout=_CLIENT_TIMEOUT_SECONDS, headers=headers
+            )
         ),
     ) as client:
         request = SendMessageRequest(
@@ -171,7 +181,9 @@ async def delegate_to_planner(runtime: ToolRuntime) -> str:
     settings = load_settings()
     request = _current_request(runtime.state["messages"])
     try:
-        message = await _send_and_get_message(settings.planner_a2a_url(), request)
+        message = await _send_and_get_message(
+            settings.planner_a2a_url(), request, headers=auth_headers(settings)
+        )
     except SubAgentResponseError as error:
         return f"ERROR: Planner delegation failed: {error}"
     return "\n".join(get_text_parts(message.parts))
@@ -185,7 +197,9 @@ async def delegate_to_researcher(task: str, runtime: ToolRuntime) -> str:
     request = _current_request(runtime.state["messages"])
     rendered = RESEARCH_INPUT_TEMPLATE.format(request=request, task=task)
     try:
-        message = await _send_and_get_message(settings.researcher_a2a_url(), rendered)
+        message = await _send_and_get_message(
+            settings.researcher_a2a_url(), rendered, headers=auth_headers(settings)
+        )
     except SubAgentResponseError as error:
         return f"ERROR: Researcher delegation failed: {error}"
     return "\n".join(get_text_parts(message.parts))
@@ -198,7 +212,9 @@ async def delegate_to_critic(findings: str, runtime: ToolRuntime) -> str | Comma
     request = _current_request(runtime.state["messages"])
     rendered = CRITIQUE_INPUT_TEMPLATE.format(request=request, findings=findings)
     try:
-        message = await _send_and_get_message(settings.critic_a2a_url(), rendered)
+        message = await _send_and_get_message(
+            settings.critic_a2a_url(), rendered, headers=auth_headers(settings)
+        )
     except SubAgentResponseError as error:
         return f"ERROR: Critic delegation failed: {error}"
 
