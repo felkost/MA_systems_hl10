@@ -317,8 +317,15 @@ def knowledge_base_stats() -> dict[str, Any]:
 def main() -> None:
     settings = load_settings()
     observability.configure_logging("search_mcp")
+    observability.configure_observability(settings, "search_mcp")
     mcp.auth = build_token_verifier(settings)
-    mcp.run(transport="http", host="127.0.0.1", port=settings.search_mcp_port)
+    mcp.add_middleware(observability.mcp_tool_span_middleware())
+    mcp.run(
+        transport="http",
+        host="127.0.0.1",
+        port=settings.search_mcp_port,
+        middleware=observability.asgi_tracing_middleware("search_mcp"),
+    )
 
 
 if __name__ == "__main__":

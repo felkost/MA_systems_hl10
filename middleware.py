@@ -18,6 +18,7 @@ assumed from the version that was current when spec Sec10 was first written.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -40,6 +41,8 @@ from langchain.agents.structured_output import ProviderStrategy
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from config import CRITIC_VERIFICATION_INSTRUCTION
 
@@ -242,6 +245,103 @@ class CriticVerificationMiddleware(
             and any(call["name"] in _VERIFICATION_TOOLS for call in message.tool_calls)
             for message in response.result
         )
+
+
+class LlmSpanMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, ResponseT]):
+    """One `llm.<role>` span per actual provider request (stage 9, spec
+    Sec16): `llm.provider`, `llm.model` and `role` on every span, plus
+    duration and, when the response carries them, token counts and cost.
+
+    Provider/model come from `settings.resolved(role)` at construction, not
+    from the response -- pure and offline, and correct even when a test
+    injects a fake `model=`, because the attributes then describe the
+    *configuration under test* (stage 10b's "n>=3 runs attributable to one
+    configuration" needs exactly this).
+
+    Placement is deliberate: **last in the middleware list, innermost**, at
+    every call site. `wrap_model_call` composes outermost-first
+    (CLAUDE.md, measured stage-5), so innermost means one span per actual
+    provider request -- `ModelRetryMiddleware`'s retries and
+    `CriticVerificationMiddleware`'s re-request each get their own span
+    with their own cost, instead of one span silently covering a whole
+    retry storm.
+
+    Defines **both** `wrap_model_call` and `awrap_model_call` -- the
+    CLAUDE.md invariant measured at stage 5: every A2A executor and the
+    Supervisor invoke via `ainvoke`, and the base class's async default
+    raises `NotImplementedError` before the real model is ever called.
+    """
+
+    def __init__(self, role: str, provider: str, model: str) -> None:
+        super().__init__()
+        self.role = role
+        self.provider = provider
+        self.model = model
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
+    ) -> ModelResponse[ResponseT]:
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span(f"llm.{self.role}") as span:
+            self._tag_span(span)
+            started = time.perf_counter()
+            try:
+                response = handler(request)
+            except Exception as error:
+                self._record_failure(span, started, error)
+                raise
+            self._record_success(span, started, response)
+            return response
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[
+            [ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]
+        ],
+    ) -> ModelResponse[ResponseT]:
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span(f"llm.{self.role}") as span:
+            self._tag_span(span)
+            started = time.perf_counter()
+            try:
+                response = await handler(request)
+            except Exception as error:
+                self._record_failure(span, started, error)
+                raise
+            self._record_success(span, started, response)
+            return response
+
+    def _tag_span(self, span: trace.Span) -> None:
+        span.set_attribute("llm.provider", self.provider)
+        span.set_attribute("llm.model", self.model)
+        span.set_attribute("role", self.role)
+
+    @staticmethod
+    def _record_failure(span: trace.Span, started: float, error: Exception) -> None:
+        span.set_attribute("llm.duration_ms", (time.perf_counter() - started) * 1000)
+        span.set_status(Status(StatusCode.ERROR, type(error).__name__))
+
+    @staticmethod
+    def _record_success(
+        span: trace.Span, started: float, response: ModelResponse[ResponseT]
+    ) -> None:
+        span.set_attribute("llm.duration_ms", (time.perf_counter() - started) * 1000)
+        message = next(
+            (m for m in reversed(response.result) if isinstance(m, AIMessage)), None
+        )
+        if message is None:
+            return
+        usage = message.usage_metadata
+        if usage:
+            span.set_attribute("llm.tokens.input", usage.get("input_tokens", 0))
+            span.set_attribute("llm.tokens.output", usage.get("output_tokens", 0))
+            span.set_attribute("llm.tokens.total", usage.get("total_tokens", 0))
+        cost = (message.response_metadata.get("token_usage") or {}).get("cost")
+        if isinstance(cost, (int, float)):
+            span.set_attribute("llm.cost_usd", cost)
 
 
 def _tool_error_to_message(exc: Exception, request: ToolCallRequest) -> str:

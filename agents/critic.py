@@ -31,7 +31,11 @@ from langgraph.graph.state import CompiledStateGraph
 
 import models
 from config import CRITIC_PROMPT, Settings
-from middleware import CriticVerificationMiddleware, a2a_agent_middleware
+from middleware import (
+    CriticVerificationMiddleware,
+    LlmSpanMiddleware,
+    a2a_agent_middleware,
+)
 from schemas import CritiqueResult
 
 CRITIC_ALLOWLIST: tuple[str, ...] = ("web_search", "read_url", "knowledge_search")
@@ -76,6 +80,8 @@ def create_critic_agent(
     agent_middleware: list[AgentMiddleware[AgentState[CritiqueResult], None, None]] = [
         *a2a_agent_middleware(tool_call_limit=settings.critic_max_tool_calls),
         CriticVerificationMiddleware(),
+        # Innermost (stage 9, spec Sec16): see agents/planner.py.
+        LlmSpanMiddleware("critic", *settings.resolved("critic")),
     ]
 
     return create_agent(

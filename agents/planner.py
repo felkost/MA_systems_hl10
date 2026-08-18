@@ -36,7 +36,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 import models
 from config import PLANNER_PROMPT, Settings
-from middleware import a2a_agent_middleware
+from middleware import LlmSpanMiddleware, a2a_agent_middleware
 from schemas import ResearchPlan
 
 # A small, fixed reconnaissance budget -- not a Settings field, since the
@@ -87,5 +87,11 @@ def create_planner_agent(
         tools=list(tools),
         system_prompt=PLANNER_PROMPT,
         response_format=PLANNER_RESPONSE_FORMAT,
-        middleware=a2a_agent_middleware(tool_call_limit=PLANNER_TOOL_CALL_LIMIT),
+        middleware=[
+            *a2a_agent_middleware(tool_call_limit=PLANNER_TOOL_CALL_LIMIT),
+            # Innermost (stage 9, spec Sec16): one span per actual provider
+            # request, so ModelRetryMiddleware's own retries each get their
+            # own span and cost.
+            LlmSpanMiddleware("planner", *settings.resolved("planner")),
+        ],
     )

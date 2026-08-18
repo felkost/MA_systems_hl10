@@ -32,6 +32,8 @@ _BLANK_MEANS_UNSET_FIELDS = (
     "openrouter_api_key",
     "max_read_url_per_search",
     "mcp_a2a_shared_token",
+    "langfuse_public_key",
+    "langfuse_secret_key",
 )
 
 
@@ -124,6 +126,22 @@ class Settings(BaseSettings):
     # recorded act, per "Settings decides, not the ambient environment".
     allow_private_network_urls: bool = False
     max_url_redirects: int = Field(default=3, ge=0, le=10)
+
+    # -- Observability (stage 9): first reader is
+    # observability.configure_observability. Off by default -- the same
+    # "Settings decides, not the ambient environment" invariant already
+    # applied to allow_private_network_urls (spec Sec11). No otlp_endpoint
+    # field: Langfuse's own span processor is the OTLP exporter, so a
+    # generic endpoint field would have no consumer (D7).
+    tracing_enabled: bool = False
+    langfuse_public_key: SecretStr | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_host: str = "http://localhost:3000"
+    trace_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
+    # Directory for the smoke test's per-process JSONL span dump (D8). None
+    # (the default) means no dump; set, it activates tracing independently
+    # of tracing_enabled, so the smoke test needs no Langfuse keys.
+    span_dump_dir: str | None = None
 
     # -- Provider selection (spec Sec 16)
     llm_provider: Provider = "openai"
@@ -282,6 +300,22 @@ class Settings(BaseSettings):
             raise ValueError(
                 "embeddings resolve to provider 'openai', but OPENAI_API_KEY "
                 "is not set"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _tracing_requires_langfuse_keys(self) -> Settings:
+        """Refuse to start rather than trace into the void (stage 9, spec
+        Sec11): the same "requested without a key is refused, not attempted"
+        invariant `_keys_present_for_resolved_providers` already applies to
+        provider keys, applied to a feature flag instead of a resolved role.
+        """
+        if self.tracing_enabled and (
+            self.langfuse_public_key is None or self.langfuse_secret_key is None
+        ):
+            raise ValueError(
+                "TRACING_ENABLED is true, but LANGFUSE_PUBLIC_KEY/"
+                "LANGFUSE_SECRET_KEY are not both set"
             )
         return self
 

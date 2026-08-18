@@ -54,6 +54,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
+import observability
 from auth import auth_headers
 from config import (
     SUPERVISOR_PROMPT,
@@ -62,6 +63,7 @@ from config import (
     load_settings,
 )
 from middleware import (
+    LlmSpanMiddleware,
     RoundStabilityMiddleware,
     SaveReportGuardMiddleware,
     _tool_error_to_message,
@@ -178,67 +180,78 @@ async def _send_and_get_message(
 async def delegate_to_planner(runtime: ToolRuntime) -> str:
     """Decompose the user's research request into a structured plan.
     Call this first, before any research or critique."""
-    settings = load_settings()
-    request = _current_request(runtime.state["messages"])
-    try:
-        message = await _send_and_get_message(
-            settings.planner_a2a_url(), request, headers=auth_headers(settings)
-        )
-    except SubAgentResponseError as error:
-        return f"ERROR: Planner delegation failed: {error}"
-    return "\n".join(get_text_parts(message.parts))
+    tracer = observability.get_tracer(__name__)
+    with tracer.start_as_current_span("delegate_to_planner"):
+        settings = load_settings()
+        request = _current_request(runtime.state["messages"])
+        try:
+            message = await _send_and_get_message(
+                settings.planner_a2a_url(), request, headers=auth_headers(settings)
+            )
+        except SubAgentResponseError as error:
+            return f"ERROR: Planner delegation failed: {error}"
+        return "\n".join(get_text_parts(message.parts))
 
 
 @tool
 async def delegate_to_researcher(task: str, runtime: ToolRuntime) -> str:
     """Execute one round of research. `task` is the plan on the first call,
     or the Critic's revision feedback on a later round."""
-    settings = load_settings()
-    request = _current_request(runtime.state["messages"])
-    rendered = RESEARCH_INPUT_TEMPLATE.format(request=request, task=task)
-    try:
-        message = await _send_and_get_message(
-            settings.researcher_a2a_url(), rendered, headers=auth_headers(settings)
-        )
-    except SubAgentResponseError as error:
-        return f"ERROR: Researcher delegation failed: {error}"
-    return "\n".join(get_text_parts(message.parts))
+    tracer = observability.get_tracer(__name__)
+    with tracer.start_as_current_span("delegate_to_researcher"):
+        settings = load_settings()
+        request = _current_request(runtime.state["messages"])
+        rendered = RESEARCH_INPUT_TEMPLATE.format(request=request, task=task)
+        try:
+            message = await _send_and_get_message(
+                settings.researcher_a2a_url(), rendered, headers=auth_headers(settings)
+            )
+        except SubAgentResponseError as error:
+            return f"ERROR: Researcher delegation failed: {error}"
+        return "\n".join(get_text_parts(message.parts))
 
 
 @tool
 async def delegate_to_critic(findings: str, runtime: ToolRuntime) -> str | Command[Any]:
     """Get an independent verdict on the current research findings."""
-    settings = load_settings()
-    request = _current_request(runtime.state["messages"])
-    rendered = CRITIQUE_INPUT_TEMPLATE.format(request=request, findings=findings)
-    try:
-        message = await _send_and_get_message(
-            settings.critic_a2a_url(), rendered, headers=auth_headers(settings)
+    tracer = observability.get_tracer(__name__)
+    with tracer.start_as_current_span("delegate_to_critic") as span:
+        settings = load_settings()
+        request = _current_request(runtime.state["messages"])
+        rendered = CRITIQUE_INPUT_TEMPLATE.format(request=request, findings=findings)
+        try:
+            message = await _send_and_get_message(
+                settings.critic_a2a_url(), rendered, headers=auth_headers(settings)
+            )
+        except SubAgentResponseError as error:
+            return f"ERROR: Critic delegation failed: {error}"
+
+        data_parts = get_data_parts(message.parts)
+        if not data_parts:
+            return "ERROR: Critic delegation failed: no data part in the response"
+
+        critique = data_parts[0]
+        gaps = list(critique.get("gaps", []))
+        verdict = critique.get("verdict")
+        # No automatic instrumentation can know this -- it is the machine-
+        # readable decision point spec Sec9 requires, crossing A2A as data.
+        span.set_attribute("a2a.verdict", verdict or "")
+        span.set_attribute("a2a.gaps", gaps)
+        rendered_text = "\n".join(get_text_parts(message.parts))
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(
+                        content=rendered_text,
+                        tool_call_id=runtime.tool_call_id,
+                        name="delegate_to_critic",
+                    )
+                ],
+                "critic_gaps": gaps,
+                "previous_critic_gaps": runtime.state.get("critic_gaps"),
+                "verdict": verdict,
+            }
         )
-    except SubAgentResponseError as error:
-        return f"ERROR: Critic delegation failed: {error}"
-
-    data_parts = get_data_parts(message.parts)
-    if not data_parts:
-        return "ERROR: Critic delegation failed: no data part in the response"
-
-    critique = data_parts[0]
-    gaps = list(critique.get("gaps", []))
-    rendered_text = "\n".join(get_text_parts(message.parts))
-    return Command(
-        update={
-            "messages": [
-                ToolMessage(
-                    content=rendered_text,
-                    tool_call_id=runtime.tool_call_id,
-                    name="delegate_to_critic",
-                )
-            ],
-            "critic_gaps": gaps,
-            "previous_critic_gaps": runtime.state.get("critic_gaps"),
-            "verdict": critique.get("verdict"),
-        }
-    )
 
 
 def create_supervisor(
@@ -297,6 +310,11 @@ def create_supervisor(
                 "save_report": {"allowed_decisions": ["approve", "edit", "reject"]}
             }
         ),
+        # Innermost (stage 9, spec Sec16): one span per actual provider
+        # request, so a `ToolRetryMiddleware`/`ModelRetryMiddleware`-driven
+        # retry gets its own span and its own cost rather than one span
+        # silently covering a whole retry storm.
+        LlmSpanMiddleware("supervisor", *settings.resolved("supervisor")),
     ]
     return create_agent(
         model=chat_model,
