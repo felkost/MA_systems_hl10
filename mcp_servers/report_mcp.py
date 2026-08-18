@@ -39,6 +39,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import observability  # noqa: E402
 import paths  # noqa: E402
+from auth import build_token_verifier  # noqa: E402
 from config import load_settings  # noqa: E402
 
 # First character must not be a dot: a naive [A-Za-z0-9._-]{1,120} class
@@ -207,6 +208,7 @@ def output_dir() -> dict[str, Any]:
 def main() -> None:
     settings = load_settings()
     observability.configure_logging("report_mcp")
+    mcp.auth = build_token_verifier(settings)
     mcp.run(transport="http", host="127.0.0.1", port=settings.report_mcp_port)
 
 

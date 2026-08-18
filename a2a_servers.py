@@ -19,6 +19,7 @@ stage 4's (author decision, stage-5 kickoff).
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Any
@@ -59,11 +60,13 @@ from langchain_core.messages import HumanMessage  # noqa: E402
 from langchain_core.tools import BaseTool  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
 
+import models  # noqa: E402
 from agents.critic import CRITIC_ALLOWLIST, create_critic_agent  # noqa: E402
 from agents.planner import PLANNER_ALLOWLIST, create_planner_agent  # noqa: E402
 from agents.research import RESEARCHER_ALLOWLIST, create_research_agent  # noqa: E402
+from auth import a2a_auth_middleware, auth_headers, build_token_verifier  # noqa: E402
 from config import Settings, load_settings  # noqa: E402
-from mcp_utils import load_agent_tools  # noqa: E402
+from mcp_utils import load_agent_tools, read_resource  # noqa: E402
 from schemas import CritiqueResult  # noqa: E402
 from schemas import ResearchPlan  # noqa: E402
 from schemas import render_critique, render_plan  # noqa: E402
@@ -90,6 +93,54 @@ class UnknownAgentError(Exception):
         super().__init__(
             f"unknown agent {agent!r} -- expected one of {list(_VALID_AGENT_NAMES)}"
         )
+
+
+class PreflightError(Exception):
+    """This agent's upstream dependency is not reachable, or its resolved
+    model cannot serve this role, at startup (stage 8).
+
+    Structural (spec Sec5): the fix is starting the dependency or changing
+    the model, never a retry -- same message convention as `main.py`'s own
+    `PreflightError`, a distinct class (each interface module owns its
+    structural errors rather than importing another interface file's, the
+    same reasoning `UnknownAgentError` already follows).
+    """
+
+
+# Only the two roles whose executor validates a `structured_response`
+# (PlannerExecutor, CriticExecutor) -- ResearcherExecutor has none
+# (agents/research.py carries no response_format), so checking it would
+# always be a wasted network round-trip.
+_STRUCTURED_OUTPUT_AGENTS = frozenset({"planner", "critic"})
+
+
+async def _preflight(settings: Settings, agent_name: str) -> None:
+    """This process's own startup checks (stage 8), scoped to what it alone
+    depends on -- distinct from `main.py`'s five-server preflight.
+
+    Raises
+    ------
+    PreflightError
+        SearchMCP is unreachable, or (for planner/critic only) the
+        resolved model cannot serve this role's structured output.
+    """
+    try:
+        await read_resource(
+            url=settings.search_mcp_url(),
+            uri="resource://knowledge-base-stats",
+            headers=auth_headers(settings),
+        )
+    except Exception as error:
+        raise PreflightError(
+            "SearchMCP is not reachable -- start it with "
+            "`python mcp_servers/search_mcp.py`"
+        ) from error
+
+    if agent_name in _STRUCTURED_OUTPUT_AGENTS:
+        try:
+            await models.assert_structured_output_supported(settings, agent_name)
+        except models.UnsupportedStructuredOutputError as error:
+            raise PreflightError(str(error)) from error
 
 
 class _SubAgentExecutor(AgentExecutor):
@@ -362,7 +413,8 @@ def build_app(settings: Settings, agent: str = "planner") -> Starlette:
     routes = create_jsonrpc_routes(handler, DEFAULT_RPC_URL) + create_agent_card_routes(
         agent_card, card_url=AGENT_CARD_WELL_KNOWN_PATH
     )
-    return Starlette(routes=routes)
+    verifier = build_token_verifier(settings)
+    return Starlette(routes=routes, middleware=a2a_auth_middleware(verifier))
 
 
 def main(agent_name: str = "planner") -> None:
@@ -370,10 +422,20 @@ def main(agent_name: str = "planner") -> None:
     -- the bare invocation (no argument) keeps serving the Planner, so the
     stage-4 bootstrap regression test is unaffected. Stage 8's `servers.py`
     launches all three by name through this same contract.
+
+    Refuses before ever binding a port if this agent's own preflight fails
+    (`_preflight`) -- `sys.exit(1)` is what lets `servers.py`'s readiness
+    wait detect a failed process quickly via `poll()`, instead of waiting
+    out the full readiness timeout.
     """
     if agent_name not in _EXECUTORS:
         raise UnknownAgentError(agent_name)
     settings = load_settings()
+    try:
+        asyncio.run(_preflight(settings, agent_name))
+    except PreflightError as error:
+        print(f"[system] {error}")
+        sys.exit(1)
     port = getattr(settings, _PORT_ATTRS[agent_name])
     uvicorn.run(build_app(settings, agent_name), host="127.0.0.1", port=port)
 

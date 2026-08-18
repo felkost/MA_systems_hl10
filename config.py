@@ -31,6 +31,7 @@ _BLANK_MEANS_UNSET_FIELDS = (
     "openai_api_key",
     "openrouter_api_key",
     "max_read_url_per_search",
+    "mcp_a2a_shared_token",
 )
 
 
