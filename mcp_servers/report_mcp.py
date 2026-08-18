@@ -208,8 +208,15 @@ def output_dir() -> dict[str, Any]:
 def main() -> None:
     settings = load_settings()
     observability.configure_logging("report_mcp")
+    observability.configure_observability(settings, "report_mcp")
     mcp.auth = build_token_verifier(settings)
-    mcp.run(transport="http", host="127.0.0.1", port=settings.report_mcp_port)
+    mcp.add_middleware(observability.mcp_tool_span_middleware())
+    mcp.run(
+        transport="http",
+        host="127.0.0.1",
+        port=settings.report_mcp_port,
+        middleware=observability.asgi_tracing_middleware("report_mcp"),
+    )
 
 
 if __name__ == "__main__":

@@ -37,6 +37,7 @@ from langgraph.types import Command
 
 import hitl
 import models
+import observability
 from auth import auth_headers
 from config import Settings, load_settings
 from mcp_utils import load_report_tools, read_resource
@@ -181,6 +182,7 @@ def build_run_config(settings: Settings, thread_id: str) -> RunnableConfig:
     return {
         "configurable": {"thread_id": thread_id},
         "recursion_limit": settings.recursion_limit,
+        "callbacks": observability.langchain_callbacks(),
     }
 
 
@@ -259,6 +261,28 @@ def _print_update(chunk: dict[str, Any]) -> None:
 async def _drive_payload(
     agent: Any, config: RunnableConfig, settings: Settings, payload: Any
 ) -> list[BaseMessage]:
+    """One `repl.question` trace (stage 9, D4): the root span opens here,
+    around the whole turn -- both the normal path (via `_drive`) and the
+    `--thread` resume-after-crash path in `main()` call this function
+    directly, so wrapping it here covers both with one root span, rather
+    than duplicating the span at each of the two call sites. `thread_id`
+    travels to all five servers as W3C baggage
+    (`langfuse.propagate_attributes(..., as_baggage=True)`), injected here
+    and extracted by every downstream `asgi_tracing_middleware`.
+    """
+    thread_id = str(config["configurable"]["thread_id"])
+    tracer = observability.configure_observability(settings, "main").tracer
+    with tracer.start_as_current_span(observability.SPAN_REPL_QUESTION) as span:
+        span.set_attribute("thread_id", thread_id)
+        from langfuse import propagate_attributes
+
+        with propagate_attributes(session_id=thread_id, as_baggage=True):
+            return await _drive_segments(agent, config, settings, payload)
+
+
+async def _drive_segments(
+    agent: Any, config: RunnableConfig, settings: Settings, payload: Any
+) -> list[BaseMessage]:
     """Alternate graph-driving segments and HITL interrupts until the turn
     ends, bounded per segment by `supervisor_run_timeout_seconds` (D3).
 
@@ -304,6 +328,10 @@ async def _drive(
 async def main(argv: Sequence[str] = ()) -> None:
     args = parse_args(argv)
     settings = load_settings()
+    # Neither call existed before stage 9 (audit item A5): the REPL had no
+    # logs/main.log and no tracer provider of its own.
+    observability.configure_logging("main")
+    observability.configure_observability(settings, "main")
 
     async with AsyncSqliteSaver.from_conn_string(
         str(checkpoint_path(settings.checkpoint_db))

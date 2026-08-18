@@ -30,6 +30,12 @@ services:
       CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      # This ClickHouse is one standalone node with no Keeper/ZooKeeper --
+      # without this, entrypoint.sh's up.sh defaults to the *clustered*
+      # migration path (ReplicatedMergeTree ON CLUSTER default), which
+      # fails outright with "no Zookeeper configuration" on a single node.
+      # "false" selects clickhouse/migrations/unclustered (plain MergeTree).
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_AUTH: ${REDIS_AUTH}
@@ -40,7 +46,13 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       TELEMETRY_ENABLED: "false"
-    mem_limit: 1g
+    # 768m OOM'd at idle startup; 1536m OOM'd a second time under the
+    # actual span-ingestion burst from one real REPL question with two
+    # REVISE rounds (both measured live, both "JavaScript heap out of
+    # memory", OOMKilled=false -- Node's own heap ceiling, not the cgroup
+    # limit killing the process outright). Raised again -- needs WSL2's own
+    # cap raised to 6GB (from 4GB) to fit alongside the other five limits.
+    mem_limit: 3072m
     restart: "no"
 
   langfuse-worker:
@@ -55,7 +67,9 @@ services:
       minio:
         condition: service_started
     environment: *langfuse-env
-    mem_limit: 1g
+    # Same Node/Prisma/ClickHouse-client stack as langfuse-web (above) --
+    # raised in the same commit rather than waiting for it to OOM too.
+    mem_limit: 768m
     restart: "no"
 
   postgres:
@@ -71,7 +85,7 @@ services:
       retries: 10
     volumes:
       - langfuse-postgres:/var/lib/postgresql/data
-    mem_limit: 512m
+    mem_limit: 256m
     restart: "no"
 
   clickhouse:
@@ -88,13 +102,13 @@ services:
     volumes:
       - langfuse-clickhouse-data:/var/lib/clickhouse
       - langfuse-clickhouse-logs:/var/log/clickhouse-server
-    mem_limit: 1500m
+    mem_limit: 1g
     restart: "no"
 
   redis:
     image: redis:7-alpine
     command: redis-server --requirepass ${REDIS_AUTH}
-    mem_limit: 256m
+    mem_limit: 128m
     restart: "no"
 
   minio:
@@ -107,7 +121,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - langfuse-minio:/data
-    mem_limit: 512m
+    mem_limit: 256m
     restart: "no"
 
 volumes:

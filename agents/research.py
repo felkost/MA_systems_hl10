@@ -28,7 +28,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 import models
 from config import RESEARCHER_PROMPT, Settings
-from middleware import ReadUrlCapMiddleware, a2a_agent_middleware
+from middleware import LlmSpanMiddleware, ReadUrlCapMiddleware, a2a_agent_middleware
 
 RESEARCHER_ALLOWLIST: tuple[str, ...] = ("web_search", "read_url", "knowledge_search")
 
@@ -65,6 +65,8 @@ def create_research_agent(
     agent_middleware: list[AgentMiddleware[AgentState[None], None, None]] = [
         *a2a_agent_middleware(tool_call_limit=settings.researcher_max_tool_calls),
         ReadUrlCapMiddleware(settings.max_read_url_per_search),
+        # Innermost (stage 9, spec Sec16): see agents/planner.py.
+        LlmSpanMiddleware("researcher", *settings.resolved("researcher")),
     ]
 
     return create_agent(

@@ -26,6 +26,7 @@ from typing import Any
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
+from opentelemetry.propagate import inject
 
 from auth import auth_headers
 from config import Settings
@@ -37,6 +38,24 @@ class MissingToolError(Exception):
     Structural (spec Sec5): the fix is starting SearchMCP or correcting a
     name in the allowlist, never a retry.
     """
+
+
+def _with_trace_context(headers: dict[str, str]) -> dict[str, str]:
+    """Explicit W3C `traceparent` injection (stage 9, D10's declared
+    fallback -- measured NO-GO at the stage-9 live check, not a
+    precaution). Automatic httpx instrumentation alone lost `traceparent`
+    on roughly half of an MCP session's own HTTP calls: the SDK's
+    streamable-HTTP session runs its request lifecycle across internal task
+    boundaries that do not reliably inherit ambient OTel context. Baking
+    the header into the connection's *static* headers -- computed once,
+    here, from whatever span is active in the caller -- applies it to every
+    request the session issues, the same way `supervisor.py`'s A2A hop
+    already gets it for free from `create_client`'s single per-call
+    `httpx.AsyncClient`.
+    """
+    carrier = dict(headers)
+    inject(carrier)
+    return carrier
 
 
 async def _load_tools(
@@ -74,7 +93,9 @@ async def _load_tools(
     client = MultiServerMCPClient(
         {
             connection_key: StreamableHttpConnection(
-                transport="streamable_http", url=url, headers=auth_headers(settings)
+                transport="streamable_http",
+                url=url,
+                headers=_with_trace_context(auth_headers(settings)),
             )
         },
         handle_tool_errors=True,
@@ -186,7 +207,9 @@ async def read_resource(
     client = MultiServerMCPClient(
         {
             "target": StreamableHttpConnection(
-                transport="streamable_http", url=url, headers=headers
+                transport="streamable_http",
+                url=url,
+                headers=_with_trace_context(headers or {}),
             )
         }
     )

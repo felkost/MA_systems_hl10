@@ -95,8 +95,9 @@ sequenceDiagram
 
 You need Python 3.12, an API key for your model provider (OpenAI or
 OpenRouter — chosen per agent in `.env`, see the comments in `.env.example`),
-Docker for Langfuse, and about 3 GB of disk for the index and the reranking
-model.
+and about 3 GB of disk for the index and the reranking model. Docker is only
+needed for Langfuse, which is off by default — see "Configuration:
+observability" below.
 
 ```bash
 git clone <this repository>
@@ -195,6 +196,30 @@ built the index; an index built under a different fingerprint is refused rather
 than answering from vectors of another embedding space — rebuild it with
 `python ingest.py`.
 
+## Configuration: observability
+
+Tracing is **off by default** — every process runs, and every test in the
+gate runs, with no Langfuse and no Docker. Turning it on is one variable,
+checked the same way the provider keys are:
+
+```ini
+TRACING_ENABLED=true
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+`TRACING_ENABLED=true` without both keys is refused at startup, the same
+"requested without a key is refused, not attempted" rule the provider keys
+follow. The keys come from the Langfuse UI, after the self-hosted stack is
+up:
+
+```bash
+docker compose up -d                 # Langfuse, Postgres, ClickHouse, Redis, MinIO
+```
+
+With tracing on, one REPL question produces one trace spanning the REPL,
+both MCP servers and all three A2A agents, visible at `http://localhost:3000`.
+
 ## Cleanup
 
 Stop the REPL and the servers with `Ctrl+C` — `servers.py` shuts all five
@@ -228,7 +253,7 @@ the index is built from) and `output/` (reports you approved).
 - [x] Stage 6 — Supervisor + REPL: Plan → Research → Critique over the protocols, `save_report` not yet bound
 - [x] Stage 7 — HITL on `save_report` + crash-safe checkpoint (`AsyncSqliteSaver`, `--thread` resume)
 - [x] Stage 8 — launcher (`servers.py`), startup preflight, shared bearer token on all five servers
-- [ ] Stage 9 — Langfuse + OpenTelemetry: one question, one trace
+- [x] Stage 9 — Langfuse + OpenTelemetry: one question, one trace
 - [ ] Stage 10 — evaluation: golden dataset, LLM judge, statistics
 - [ ] Stage 11 — final report (EN/UA)
 

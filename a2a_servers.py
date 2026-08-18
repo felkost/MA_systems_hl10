@@ -58,9 +58,11 @@ from a2a.types import (  # noqa: E402
 from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH, DEFAULT_RPC_URL  # noqa: E402
 from langchain_core.messages import HumanMessage  # noqa: E402
 from langchain_core.tools import BaseTool  # noqa: E402
+from opentelemetry import trace  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
 
 import models  # noqa: E402
+import observability  # noqa: E402
 from agents.critic import CRITIC_ALLOWLIST, create_critic_agent  # noqa: E402
 from agents.planner import PLANNER_ALLOWLIST, create_planner_agent  # noqa: E402
 from agents.research import RESEARCHER_ALLOWLIST, create_research_agent  # noqa: E402
@@ -157,14 +159,29 @@ class _SubAgentExecutor(AgentExecutor):
     """
 
     allowlist: tuple[str, ...]
+    agent_name: str
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        request = context.get_user_input()
-        settings = load_settings()
-        tools = await load_agent_tools(settings, self.allowlist)
-        agent = self._build_agent(settings, tools)
-        result = await agent.ainvoke({"messages": [HumanMessage(request)]})
-        await event_queue.enqueue_event(self._to_message(result))
+        """The `agent.<name>` span (stage 9, spec Sec11) wraps the whole
+        body, not just `ainvoke` -- it is what the criterion calls "the A2A
+        agent span" and must cover tool loading too, since
+        `mcp.tool.*` spans nest under it via the ASGI request that
+        `load_agent_tools`'s own MCP call carries. No explicit parent
+        context is passed: `DefaultRequestHandler` creates this coroutine's
+        task from inside the request coroutine (measured, a2a-sdk source),
+        so contextvars -- and with them the ASGI server span the caller's
+        `asgi_tracing_middleware` already opened -- are inherited normally.
+        """
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span(f"agent.{self.agent_name}") as span:
+            span.set_attribute("a2a.agent", self.agent_name)
+            request = context.get_user_input()
+            settings = load_settings()
+            tools = await load_agent_tools(settings, self.allowlist)
+            span.set_attribute("a2a.tools", [tool.name for tool in tools])
+            agent = self._build_agent(settings, tools)
+            result = await agent.ainvoke({"messages": [HumanMessage(request)]})
+            await event_queue.enqueue_event(self._to_message(result))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         # Pattern A never creates a Task, so there is nothing long-running to
@@ -192,6 +209,7 @@ class PlannerExecutor(_SubAgentExecutor):
     """One Planner run per A2A request."""
 
     allowlist = PLANNER_ALLOWLIST
+    agent_name = "planner"
 
     def _build_agent(self, settings: Settings, tools: list[BaseTool]) -> Any:
         return create_planner_agent(settings, tools)
@@ -211,6 +229,7 @@ class ResearcherExecutor(_SubAgentExecutor):
     """
 
     allowlist = RESEARCHER_ALLOWLIST
+    agent_name = "researcher"
 
     def _build_agent(self, settings: Settings, tools: list[BaseTool]) -> Any:
         return create_research_agent(settings, tools)
@@ -235,6 +254,7 @@ class CriticExecutor(_SubAgentExecutor):
     """
 
     allowlist = CRITIC_ALLOWLIST
+    agent_name = "critic"
 
     def _build_agent(self, settings: Settings, tools: list[BaseTool]) -> Any:
         return create_critic_agent(settings, tools)
@@ -414,7 +434,16 @@ def build_app(settings: Settings, agent: str = "planner") -> Starlette:
         agent_card, card_url=AGENT_CARD_WELL_KNOWN_PATH
     )
     verifier = build_token_verifier(settings)
-    return Starlette(routes=routes, middleware=a2a_auth_middleware(verifier))
+    # OTel ASGI middleware goes innermost, after auth (stage 9, D3): FastMCP
+    # already appends caller middleware after its own auth stack, so this
+    # keeps both server families symmetric -- a trace gap on one side means
+    # the same thing as on the other. An outermost tracer would also mint a
+    # root span for every unauthenticated request.
+    middleware = [
+        *a2a_auth_middleware(verifier),
+        *observability.asgi_tracing_middleware(agent),
+    ]
+    return Starlette(routes=routes, middleware=middleware)
 
 
 def main(agent_name: str = "planner") -> None:
@@ -436,6 +465,10 @@ def main(agent_name: str = "planner") -> None:
     except PreflightError as error:
         print(f"[system] {error}")
         sys.exit(1)
+    # Neither call existed before stage 9 (audit item A5): this process had
+    # no `logs/<agent>.log` and no tracer provider of its own.
+    observability.configure_logging(agent_name)
+    observability.configure_observability(settings, agent_name)
     port = getattr(settings, _PORT_ATTRS[agent_name])
     uvicorn.run(build_app(settings, agent_name), host="127.0.0.1", port=port)
 
