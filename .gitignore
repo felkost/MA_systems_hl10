@@ -42,6 +42,13 @@ runtime/
 !README.md
 !report/*.md
 
+# evals/ is a declared exception to the local-only doc policy above (spec
+# Sec13, decision D5): the golden dataset and its fixtures ship publicly,
+# alongside the rest of the tracked project. Without this negation,
+# evals/fixtures/poisoned_document.md is silently swallowed by the *.md
+# rule above -- found live, while staging this stage's own commit.
+!evals/fixtures/*.md
+
 # output/ holds generated reports. Ignore its contents, then re-include the
 # reports and the placeholder: a stray file from a crashed run must not be
 # picked up by a broad `git add`. Ignoring `output/` itself would make these

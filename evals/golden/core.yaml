@@ -1,0 +1,64 @@
+# Golden dataset -- core slice (spec Sec13): representative cases the
+# ingested corpus (data/2404.11584v1.pdf, "The Landscape of Emerging AI
+# Agent Architectures for Reasoning, Planning, and Tool Calling: A Survey",
+# Masterman/Besen/Sawtell/Chao, 2024) and the web can answer between them.
+#
+# evals/golden/*.yaml is the source of truth; Langfuse is a projection of
+# it (spec Sec13, evals/upload_dataset.py). Loaded and validated through
+# evals/dataset.py::GoldenCase -- see that module for the schema.
+
+- id: core-single-vs-multi-agent
+  question: >-
+    Based on the ingested survey of AI agent architectures, what
+    distinguishes single-agent from multi-agent designs, and when does the
+    survey say each tends to work better?
+  rationale: >-
+    Directly grounded in the corpus's own taxonomy section -- checks
+    knowledge_search retrieval and citation of a specific, checkable claim.
+  expects:
+    must_cite: true
+
+- id: core-agent-persona
+  question: >-
+    What is an "agent persona" in the ingested survey's terminology, and
+    what role does it play in an AI agent's architecture?
+  rationale: >-
+    A narrower, more specific corpus question than
+    core-single-vs-multi-agent -- tests precise retrieval rather than a
+    broad summary.
+  expects:
+    must_cite: true
+
+- id: core-tool-calling-role
+  question: >-
+    According to the ingested survey, what role does tool calling play in
+    AI agent architectures, and how does it relate to planning and
+    reasoning?
+  rationale: >-
+    A third distinct corpus-grounded angle, covering a different section
+    of the same paper than the other two core cases.
+  expects:
+    must_cite: true
+
+- id: core-2026-agent-frameworks
+  question: >-
+    What are the most notable open-source AI agent frameworks or
+    orchestration platforms released in 2025 and 2026?
+  rationale: >-
+    The ingested survey is dated April 2024 -- this question can only be
+    answered from the web, and a stale-only answer (citing 2024-era
+    frameworks as if current) would be a freshness failure. The hl8-donor
+    equivalent of this row is what first surfaced that failure mode.
+
+- id: core-agent-vs-rag-boundary
+  question: >-
+    How do emerging AI agent architectures differ from a plain
+    Retrieval-Augmented Generation (RAG) chat-over-documents pattern, and
+    why might a team choose one over the other?
+  rationale: >-
+    Sits on the boundary between the corpus (which explicitly frames
+    agents as the "next generation" beyond RAG chat) and general web
+    knowledge -- exercises both knowledge_search and web_search in one
+    question.
+  expects:
+    must_cite: true

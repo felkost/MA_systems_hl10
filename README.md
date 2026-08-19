@@ -171,6 +171,18 @@ OPENAI_API_KEY=sk-...
 OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
+**The `JUDGE` role is not optional configuration once `evals/` is used.**
+`evals/judge.py`'s LLM judge grades a run's evidence against the golden
+dataset, and it must come from a different model family than the agents it
+grades — an unset `JUDGE_PROVIDER`/`JUDGE_MODEL_NAME` falls back to
+`LLM_PROVIDER`/`MODEL_NAME`, the exact self-preference bias this is meant to
+avoid:
+
+```ini
+JUDGE_PROVIDER=openrouter
+JUDGE_MODEL_NAME=anthropic/claude-sonnet-4.5
+```
+
 Two rules are checked when the configuration is loaded — offline, in every
 process, before any request is sent:
 
@@ -254,7 +266,8 @@ the index is built from) and `output/` (reports you approved).
 - [x] Stage 7 — HITL on `save_report` + crash-safe checkpoint (`AsyncSqliteSaver`, `--thread` resume)
 - [x] Stage 8 — launcher (`servers.py`), startup preflight, shared bearer token on all five servers
 - [x] Stage 9 — Langfuse + OpenTelemetry: one question, one trace
-- [ ] Stage 10 — evaluation: golden dataset, LLM judge, statistics
+- [ ] Stage 10a — evaluation tooling: golden dataset, judge, auto-approve HITL harness, dataset runner (offline gate green; live go/no-go steps and stage report pending)
+- [ ] Stage 10b — real runs, error analysis, statistics
 - [ ] Stage 11 — final report (EN/UA)
 
 ## Documentation
