@@ -29,11 +29,12 @@ import sys
 import threading
 import time
 import uuid
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Protocol
 
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -59,6 +60,55 @@ _FIXTURE_URL_PLACEHOLDER = "{fixture_url}"
 class DatasetValidationError(Exception):
     """Fail before spending (hl8's own lesson): raised before a single case
     runs, never mid-sweep."""
+
+
+class DatasetLinker(Protocol):
+    """The subset of the Langfuse client this module needs to link a run's
+    traces back to the dataset items they answered (D6).
+
+    Narrow enough to fake offline, the same `Protocol` shape
+    `evals/upload_dataset.py::DatasetClient` already uses -- which is what
+    lets the gate prove the linking with no container running.
+    """
+
+    def create_dataset_run_item(
+        self,
+        *,
+        run_name: str,
+        dataset_item_id: str,
+        trace_id: str,
+        metadata: Any = None,
+    ) -> Any: ...
+
+    def flush(self) -> None: ...
+
+
+def _link_case_to_dataset(
+    linker: DatasetLinker,
+    *,
+    run_name: str,
+    case: GoldenCase,
+    trace_id: str,
+) -> None:
+    """Link one case's trace to its dataset item, never letting the link
+    fail the run.
+
+    D3 makes this a *projection*: the JSONL span dump is the evidence, and
+    a Langfuse that is down or misconfigured must cost the run its UI
+    linkage, not its data. Swallowing the exception here is therefore the
+    point, not laziness -- the alternative loses a paid run's results to a
+    container problem.
+    """
+    try:
+        linker.create_dataset_run_item(
+            run_name=run_name,
+            dataset_item_id=case.id,
+            trace_id=trace_id,
+        )
+    except Exception as error:  # noqa: BLE001 -- see the docstring
+        logging.getLogger("main").warning(
+            "dataset run link failed for case %r: %s", case.id, error
+        )
 
 
 class FixtureServer:
@@ -254,6 +304,8 @@ async def run_dataset(
     preflight: PreflightFn | None = None,
     build_agent: BuildAgentFn = create_supervisor,
     judge_model: BaseChatModel | None = None,
+    dataset_linker: DatasetLinker | None = None,
+    run_name: str | None = None,
 ) -> list[CaseResult]:
     """Run every case in `cases` against the stack `launch_all` boots,
     writing one JSON line per case to `run_dir / "results.jsonl"` as soon as
@@ -284,6 +336,15 @@ async def run_dataset(
     judge_model : BaseChatModel, optional
         Forwarded to `evals.judge.judge` -- tests inject a scripted fake
         here instead of reaching a real provider.
+    dataset_linker : DatasetLinker, optional
+        When given, each case's trace is linked back to its Langfuse
+        dataset item (D6), which is what fills the dataset's Experiments
+        tab. `None` (the default) keeps the whole run offline-usable --
+        the JSONL evidence never depends on it (D3).
+    run_name : str, optional
+        The Langfuse dataset-run name every link is filed under. Defaults
+        to the run directory's own name, so a run is findable in the UI by
+        the same string it has on disk.
 
     Returns
     -------
@@ -296,8 +357,10 @@ async def run_dataset(
     observability.configure_logging("main")
     observability.configure_observability(settings, "main")
 
+    resolved_run_name = run_name or run_dir.name
     metadata = {
         "run_dir": str(run_dir),
+        "run_name": resolved_run_name,
         "provider_map": resolved_map(settings),
         "case_ids": [case.id for case in cases],
     }
@@ -356,6 +419,13 @@ async def run_dataset(
                             settings, case, pack, model=judge_model
                         )
                         result.verdict = verdict.model_dump()
+                    if dataset_linker is not None and result.trace_id is not None:
+                        _link_case_to_dataset(
+                            dataset_linker,
+                            run_name=resolved_run_name,
+                            case=case,
+                            trace_id=result.trace_id,
+                        )
                     results.append(result)
                     handle.write(result.to_json_line() + "\n")
                     handle.flush()
@@ -364,6 +434,16 @@ async def run_dataset(
         observability.shutdown_observability()
         if fixture_server is not None:
             fixture_server.stop()
+        if dataset_linker is not None:
+            # Ingestion is batched; a runner that exits without flushing
+            # links nothing at all -- the same trap `upload_dataset.py`
+            # already carries a comment about.
+            try:
+                dataset_linker.flush()
+            except Exception as error:  # noqa: BLE001 -- projection, not evidence
+                logging.getLogger("main").warning(
+                    "dataset linker flush failed: %s", error
+                )
 
     return results
 
@@ -416,7 +496,26 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-judge", action="store_true", help="Skip the judge for every case"
     )
+    parser.add_argument(
+        "--no-dataset-link",
+        action="store_true",
+        help="Do not link this run's traces to the Langfuse dataset (D6). "
+        "Linking is skipped automatically when the Langfuse keys are unset, "
+        "so this flag is only for running against a live Langfuse without "
+        "recording the run in it",
+    )
     return parser.parse_args(argv)
+
+
+def _build_dataset_linker(settings: Settings) -> DatasetLinker | None:
+    """A real Langfuse client for D6's run linking, or `None` when the keys
+    are unset -- an unconfigured Langfuse must skip the projection, never
+    fail the run (D3)."""
+    if settings.langfuse_public_key is None or settings.langfuse_secret_key is None:
+        return None
+    from evals.upload_dataset import build_client
+
+    return build_client(settings)  # type: ignore[return-value]
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -429,12 +528,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         else PROJECT_ROOT / "runtime" / _RUNS_DIR_NAME / str(int(time.time()))
     )
     settings = _settings_for_run(run_dir)
+    linker = None if args.no_dataset_link else _build_dataset_linker(settings)
 
     results = asyncio.run(
-        run_dataset(settings, cases, run_dir=run_dir, run_judge=not args.no_judge)
+        run_dataset(
+            settings,
+            cases,
+            run_dir=run_dir,
+            run_judge=not args.no_judge,
+            dataset_linker=linker,
+        )
     )
+    linked = " (linked to the Langfuse dataset)" if linker is not None else ""
     print(
-        f"[system] {len(results)} case(s) run -- results at "
+        f"[system] {len(results)} case(s) run{linked} -- results at "
         f"{run_dir / 'results.jsonl'}"
     )
 

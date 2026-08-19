@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+import httpx
+
 from config import Settings, load_settings
 from evals.dataset import GoldenCase, load_all
 
@@ -22,6 +24,19 @@ _DATASET_DESCRIPTION = (
     "adversarial slices. evals/golden/*.yaml is the source of truth; this "
     "dataset is a projection of it."
 )
+
+
+class DatasetUploadError(Exception):
+    """Langfuse is not reachable. Structural (spec Sec5): the fix is to
+    start the container stack, never a retry -- same message convention as
+    `main.py::PreflightError`, which names the down dependency *and* the
+    command that starts it.
+
+    Found live 2026-08-19: with the stack stopped, `upload()` surfaced a
+    raw `httpx.ReadTimeout` chain over a hundred lines long, naming
+    neither Langfuse nor `docker compose`. Every other entry point in this
+    project already refuses clearly; this one did not.
+    """
 
 
 class DatasetClient(Protocol):
@@ -79,6 +94,7 @@ def upload(
     *,
     client: DatasetClient | None = None,
     settings: Settings | None = None,
+    host: str | None = None,
 ) -> None:
     """Upload every golden case as one Langfuse dataset item, upserted by
     the case's own stable id.
@@ -93,6 +109,16 @@ def upload(
     settings : Settings, optional
         Defaults to `load_settings()`; only consulted when `client` is not
         given.
+    host : str, optional
+        The Langfuse host to name in a `DatasetUploadError`. Defaults to
+        `settings.langfuse_host`; passed explicitly only when `client` is
+        injected and there is no `Settings` to read it from.
+
+    Raises
+    ------
+    DatasetUploadError
+        Langfuse is not reachable -- one named refusal naming the host and
+        the command that starts the stack, never a raw `httpx` traceback.
 
     Notes
     -----
@@ -101,18 +127,42 @@ def upload(
     instead of duplicating them.
     """
     resolved_cases = cases if cases is not None else load_all()
-    resolved_client = (
-        client if client is not None else build_client(settings or load_settings())
+    resolved_settings = settings
+    if client is not None:
+        resolved_client = client
+    else:
+        if resolved_settings is None:
+            resolved_settings = load_settings()
+        resolved_client = build_client(resolved_settings)
+    resolved_host = host or (
+        resolved_settings.langfuse_host if resolved_settings else "the Langfuse host"
     )
 
-    resolved_client.create_dataset(name=DATASET_NAME, description=_DATASET_DESCRIPTION)
-    for case in resolved_cases:
-        resolved_client.create_dataset_item(**_item_payload(case))
-    resolved_client.flush()
+    try:
+        resolved_client.create_dataset(
+            name=DATASET_NAME, description=_DATASET_DESCRIPTION
+        )
+        for case in resolved_cases:
+            resolved_client.create_dataset_item(**_item_payload(case))
+        resolved_client.flush()
+    except httpx.HTTPError as error:
+        raise DatasetUploadError(
+            f"Langfuse at {resolved_host} is not reachable ({type(error).__name__})"
+            " -- start the container stack with `docker compose up -d`, wait"
+            " for all six services to report healthy, then re-run this"
+            " command"
+        ) from error
 
 
 def main() -> None:
-    upload()
+    """CLI entry point. A structural failure prints one `[system]` line and
+    exits non-zero -- the same shape `main.py` and `servers.py` already use,
+    rather than letting a traceback reach the operator."""
+    try:
+        upload()
+    except DatasetUploadError as error:
+        print(f"[system] {error}")
+        raise SystemExit(1) from error
 
 
 if __name__ == "__main__":

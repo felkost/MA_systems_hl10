@@ -45,6 +45,26 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      # Batch exports (the UI's "download as CSV/JSON") are a *separate*
+      # bucket configuration from the event upload above -- with only the
+      # event-upload block set, every export job fails with a bare "An
+      # internal error occurred" (measured at stage 10a, three attempts).
+      # Same bucket, distinct prefix, so the minio entrypoint below needs
+      # no second `mkdir`.
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "true"
+      LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse
+      LANGFUSE_S3_BATCH_EXPORT_PREFIX: batch-exports/
+      LANGFUSE_S3_BATCH_EXPORT_REGION: auto
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
+      # The one non-obvious line. The finished export is handed to the
+      # *browser* as a presigned URL, and the browser is not inside the
+      # compose network -- signed against `http://minio:9000` it resolves
+      # nowhere and the download fails even though the job succeeded. This
+      # is why the minio service below also gains a host port binding.
+      LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT: http://localhost:9090
       TELEMETRY_ENABLED: "false"
     # 768m OOM'd at idle startup; 1536m OOM'd a second time under the
     # actual span-ingestion burst from one real REPL question with two
@@ -116,6 +136,10 @@ services:
     entrypoint: sh
     # Create the bucket the worker expects, then serve.
     command: -c 'mkdir -p /data/langfuse && minio server /data'
+    # Loopback only, per the project's no-0.0.0.0 rule. Present solely so a
+    # presigned batch-export URL handed to the browser resolves.
+    ports:
+      - "127.0.0.1:9090:9000"
     environment:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
