@@ -7,10 +7,9 @@ their tools over **MCP** and to each other over **A2A** — each sub-agent is
 its own A2A server with its own Agent Card, and the coordinator is the only
 agent living in your terminal's process.
 
-Built with LangChain/LangGraph, FastMCP, `a2a-sdk` and Langfuse. Extends
-[MA_systems_hl8](https://github.com/felkost/MA_systems_hl8), which ran the
-same Plan → Research → Critique loop in a single process; this project splits
-it across six.
+Built with LangChain/LangGraph, FastMCP, `a2a-sdk` and Langfuse. The same
+Plan → Research → Critique loop runs across six networked processes rather
+than one.
 
 ## Architecture
 
@@ -220,7 +219,7 @@ than answering from vectors of another embedding space — rebuild it with
 ### The configuration every published number was measured under
 
 The formula above allows many configurations; the project was run in one of
-them, and every figure the evaluation stages report comes from it. The four
+them, and every figure the evaluation reports comes from it. The four
 chat roles and the judge are recorded per run in the run set's own metadata,
 resolved at run time rather than reconstructed afterwards; the embeddings row
 comes from the index manifest that run read:
@@ -235,7 +234,7 @@ Four agents on one model is a deliberate baseline, not a shortcut: the
 protocol split is what this project measures, and giving each agent a
 different model would mix that effect with a model-choice effect. The judge
 sits in a different family from every agent it grades, per the rule above —
-and stage 10b measured that even so, its own run-to-run variance on identical
+and measurement shows that even so, its own run-to-run variance on identical
 evidence is larger than several of the effects it was asked to detect.
 
 ## Configuration: observability
@@ -265,8 +264,8 @@ both MCP servers and all three A2A agents, visible at `http://localhost:3000`.
 ## Evaluation: running a sweep and scoring it
 
 Running the golden dataset against the real stack and judging the result are
-two separate commands (stage 10b, decision D1) — a live sweep is expensive,
-a rubric revision is not, so they are never paid for together:
+two separate commands — a live sweep is expensive, a rubric revision is not,
+so they are never paid for together:
 
 ```bash
 python -m evals.run_eval --repeat 3 --run-dir runs/sweep-01
@@ -293,22 +292,22 @@ labels, also with an interval). No servers boot; the judge model is the only
 thing reached, so re-scoring the same sweep under a revised rubric costs one
 judge call per case, not another live run.
 
-**Read a single scoring pass with care.** Stage 10b scored the identical
-packs twice and the two passes disagreed by up to 20 percentage points on one
-rubric item, with another item's kappa moving from 1.0 to 0.0 — the judge is
-a sampling model, and its run-to-run variance can exceed the effect being
-measured. `--passes N` (stage 10c) now scores the same corpus N times and
-reports **two** intervals per rubric item in `summary-<version>.json`: the
-existing one resamples the **cases**, a new `judge_repeat_ci_low`/`_ci_high`
-resamples the **passes**, computed on the intersection of cases scored in
-every pass. **Measured across three complete, evenly-distributed passes,
-this confirms stage 10b's finding rather than shrinking it**: the same
-rubric item moves across a 20.0 percentage-point range — the same order of
-magnitude 10b saw, not a smaller one. A two-pass figure taken mid-measurement
+**Read a single scoring pass with care.** An initial two-pass scoring run
+over identical packs disagreed by up to 20 percentage points on one rubric
+item, with another item's kappa moving from 1.0 to 0.0 — the judge is a
+sampling model, and its run-to-run variance can exceed the effect being
+measured. `--passes N` now scores the same corpus N times and reports
+**two** intervals per rubric item in `summary-<version>.json`: the existing
+one resamples the **cases**, a new `judge_repeat_ci_low`/`_ci_high` resamples
+the **passes**, computed on the intersection of cases scored in every pass.
+**Measured across three complete, evenly-distributed passes, this confirms
+the earlier finding rather than shrinking it**: the same rubric item moves
+across a 20.0 percentage-point range — the same order of magnitude as the
+initial run, not a smaller one. A two-pass figure taken mid-measurement
 (before the third pass finished) showed only 6.2 points and would have been
-the wrong number to publish; it looked like 10b's finding was mostly an
-unlucky pair of passes, and the third pass showed that reading was itself
-the unlucky-pair artefact. Never quote a single-pass figure as final —
+the wrong number to publish; it looked like the earlier disagreement was
+mostly an unlucky pair of passes, and the third pass showed that reading was
+itself the unlucky-pair artefact. Never quote a single-pass figure as final —
 `--passes 1` (the default) carries no judge-repeat interval at all — and
 treat even a two-pass figure as provisional until a third pass confirms it.
 
@@ -336,33 +335,14 @@ the index is built from) and `output/` (reports you approved). `output/` is
 tracked, so your own approved reports land beside the samples that ship with
 the repository; deleting one is a tracked change like any other.
 
-## Progress
-
-- [x] Stage 0 — kickoff: repository, standards, staged plan
-- [x] Stage 1 — RAG foundation (`ingest.py`, `retriever.py`, manifest with content hashes)
-- [x] Stage 2 — SearchMCP :8901 (3 tools + resource)
-- [x] Stage 3 — ReportMCP :8902 (`save_report` + resource), plus the `read_url` egress guardrail
-- [x] Stage 4 — the Planner's A2A server :8903 with its Agent Card
-- [x] Stage 5 — Researcher :8904 + Critic :8905 over A2A, plus `middleware.py` and the output-shape guardrail
-- [x] Stage 6 — Supervisor + REPL: Plan → Research → Critique over the protocols, `save_report` not yet bound
-- [x] Stage 7 — HITL on `save_report` + crash-safe checkpoint (`AsyncSqliteSaver`, `--thread` resume)
-- [x] Stage 8 — launcher (`servers.py`), startup preflight, shared bearer token on all five servers
-- [x] Stage 9 — Langfuse + OpenTelemetry: one question, one trace
-- [x] Stage 10a — evaluation tooling: golden dataset, judge, auto-approve HITL harness, dataset runner
-- [x] Stage 10b — real runs, error analysis, statistics (36-trace sweep, nine-category taxonomy, rubric v1 -> v2 derived from it, five-item scores with bootstrap CIs; **three of five items reported unvalidated** once both scoring passes count, six system defects recorded and deliberately unfixed)
-- [x] Stage 10c — judge run-to-run variance (n >= 3 scoring, `--passes N`) and independent human labels (24 traces, spec Sec13.6 partly closed: `citation_reliability` now validated). F10 confirms stage 10b's finding at the same order of magnitude (20 pp spread across three complete, evenly-distributed passes) rather than shrinking it
-- [x] Stage 10d — narrow hardening: F6 (`knowledge_search` untrusted-content wrapping) and F2 (out-of-scope refusal gate). F6 measured 2/3 resistance both before and after the fix -- no measured change, not parity with `read_url`'s 3/3. F2 adds a schema fix (a Python-default field is excluded from OpenAI's strict-mode `required`, so the model wasn't reliably asked for it) alongside prompt tightening; measured 3/3 clean refusals and 0/5 over-refusals on the final live sweep, though which change causally explains that result is not established by the evidence
-- [ ] Stage 11 — final report (EN/UA)
-
 ## Documentation
 
 The full report — architecture, tested scenarios, measured numbers with
-confidence intervals, and the cost of the protocol split against the hl8
-baseline — ships at stage 11 as `report/report_en.md` and
+confidence intervals — lives at `report/report_en.md` and
 `report/report_ua.md`.
 
 `output/` carries what the system itself wrote: real reports from real REPL
 sessions, unedited, each one the artefact of a full Plan → Research →
 Critique → approve cycle. They are samples of the system's actual output
 quality, not curated examples — including its citation habits, which the
-evaluation stages measure rather than assume.
+evaluation measures rather than assumes.

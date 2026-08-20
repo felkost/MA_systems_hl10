@@ -13,9 +13,8 @@ explicitly carries none).
 
 `langchain_huggingface` is imported inside `build_embeddings`, not at module
 scope: importing it eagerly pulls in `sentence_transformers`, the same cost
-`retriever.py` already deferred for the cross-encoder -- confirmed by
-`tests/test_retriever.py::test_importing_retriever_does_not_load_sentence_transformers`,
-which broke the first time this import sat at the top of this file, because
+`retriever.py` already deferred for the cross-encoder -- confirmed by a test
+that broke the first time this import sat at the top of this file, because
 `retriever.py` imports `ingest`, which imports this module.
 """
 

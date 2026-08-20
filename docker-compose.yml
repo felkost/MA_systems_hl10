@@ -1,8 +1,9 @@
 # Self-hosted Langfuse v3 stack. Written at stage 0 so .env.example and this
 # file agree from the start; first started at stage 9.
 #
-# Memory is pinned per container (as hl8 pinned Neo4j under the WSL cap):
-# the whole stack must fit next to four Python processes on a dev machine.
+# Memory is pinned per container (as an earlier iteration pinned Neo4j
+# under the WSL cap): the whole stack must fit next to four Python
+# processes on a dev machine.
 # All secrets come from .env -- validate the rendered file with
 # `docker compose config` before the first start.
 

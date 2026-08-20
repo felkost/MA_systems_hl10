@@ -1,13 +1,12 @@
 """The Supervisor: a local `create_agent` whose three tools are thin async
 wrappers over `a2a.client` calls to the three A2A sub-agents (stage 6).
 
-Reference for every A2A shape below: spec Sec5a
-(docs/superpowers/specs/2026-08-14-mcp-a2a-refactor-design-en.md), measured
-against the installed a2a-sdk 1.1.2 -- re-verified at this stage's kickoff
-via a nine-point client-path audit (`insights.md`, 2026-08-17).
+Reference for every A2A shape below: spec Sec5a, measured against the
+installed a2a-sdk 1.1.2 -- re-verified at this stage's kickoff via a
+nine-point client-path audit (2026-08-17).
 
-**Layering (spec Sec6 rule 2, pinned by tests/test_layering.py):** this
-module never imports `a2a_servers` or `agents/*`. Every delegation crosses a
+**Layering (spec Sec6 rule 2):** this module never imports `a2a_servers` or
+`agents/*`. Every delegation crosses a
 real network hop -- importing an agent factory directly would work perfectly
 and violate the assignment's central requirement invisibly.
 

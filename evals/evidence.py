@@ -310,8 +310,8 @@ def _llm_call(attributes: dict[str, Any]) -> LlmCall:
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     """Parse one JSONL span dump, tolerating a corrupt line -- concurrent
-    writes across the run's processes can interleave partial lines (hl8
-    measured `JSONDecodeError` from exactly this), and one bad line must
+    writes across the run's processes can interleave partial lines (measured
+    `JSONDecodeError` from exactly this), and one bad line must
     cost one span, not the run."""
     if not path.exists():
         return []

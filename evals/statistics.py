@@ -245,9 +245,9 @@ def discriminates(verdicts: Sequence[str | None]) -> bool:
     -------
     bool
         `False` when fewer than two non-abstaining values remain, or every
-        remaining value is identical (the exact hl8 defect this check
-        exists to catch: an evaluator whose verdict never varies looks
-        exactly like a passing gate).
+        remaining value is identical (the exact defect this check exists
+        to catch, measured previously: an evaluator whose verdict never
+        varies looks exactly like a passing gate).
     """
     non_abstaining = [verdict for verdict in verdicts if verdict is not None]
     if len(non_abstaining) < 2:

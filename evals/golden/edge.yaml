@@ -8,7 +8,7 @@
     Entirely outside the corpus and outside this system's research-
     assistant purpose -- checks whether the system recognises and states
     that, rather than fabricating a plan around a request there is nothing
-    to research. Same shape as hl8's own out-of-scope row.
+    to research. Same shape as an earlier iteration's own out-of-scope row.
   expects:
     out_of_scope: true
 

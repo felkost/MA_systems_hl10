@@ -6,8 +6,7 @@ open choice -- `a2a_servers.py`'s own `main()` docstring already commits to
 "launches all three by name through this same contract" (a CLI invocation),
 predating this module. Confirmed on the merits too: reuses the
 `Popen(stdout=PIPE)` + stdout-poll-for-readiness pattern already proven 3x in
-this suite (`tests/test_a2a_servers.py`, `test_search_mcp.py`,
-`test_report_mcp.py`) rather than inventing one; avoids
+this project's test suite rather than inventing one; avoids
 `multiprocessing.spawn`'s Windows re-import cost for `agents/*`'s
 langchain/langgraph imports and its picklability constraints; gives each
 server its own stdout pipe for readiness polling without interleaving, which
@@ -20,9 +19,9 @@ wrong: this same stage adds a fail-fast SearchMCP-reachability preflight to
 three A2A servers would race SearchMCP's cold start (3-10s of imports alone,
 measured at stage 2) and die with `sys.exit(1)`. Two phases -- (SearchMCP,
 ReportMCP), then (Planner, Researcher, Critic) -- resolves it, and matches
-the brief's own documented launch order (`docs/task-hl10.md`, "Порядок
-запуску"). Stated cost: boot wall-clock is the sum of the two phases'
-readiness waits, not their max.
+the brief's own documented launch order ("Порядок запуску"). Stated cost:
+boot wall-clock is the sum of the two phases' readiness waits, not their
+max.
 
 No auth token handling lives here: each child's own `main()` calls
 `auth.build_token_verifier(settings)` itself (search_mcp.py, report_mcp.py,
@@ -122,7 +121,7 @@ def _port_env(settings: Settings) -> dict[str, str]:
 
 
 def default_phases(settings: Settings) -> tuple[tuple[_ServerSpec, ...], ...]:
-    """The five servers in CLAUDE.md's own port-table order, in two boot
+    """The five servers in this project's own port-table order, in two boot
     phases: (SearchMCP, ReportMCP), then (Planner, Researcher, Critic)."""
     env = _port_env(settings)
     search_mcp = paths.PROJECT_ROOT / "mcp_servers" / "search_mcp.py"
@@ -225,7 +224,7 @@ def launch_all(
 
 def shutdown_all(servers: Sequence[_RunningServer]) -> None:
     """`terminate()` -> `wait(10)` -> `kill()` per process, generalizing
-    the pattern already proven in `tests/test_a2a_servers.py` etc. to N
+    the pattern already proven in this project's test suite to N
     processes. Never raises -- a shutdown that can itself fail is a
     launcher that can hang on Ctrl+C, which defeats the point."""
     for server in servers:

@@ -3,8 +3,8 @@
 
 Every optional expectation reads `None`, never folded into `False` -- a case
 that says nothing about citations abstains the `citation reliability` check
-rather than measuring a failure it never claimed, the same discipline hl8's
-own evaluators used (`score: bool | None`, never `0`).
+rather than measuring a failure it never claimed, the same discipline an
+earlier iteration's own evaluators used (`score: bool | None`, never `0`).
 """
 
 from __future__ import annotations

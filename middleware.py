@@ -1,19 +1,18 @@
 """Middleware for the three A2A sub-agents and the Supervisor (spec Sec10).
 
-Two classes ported near-verbatim from the hl8 donor
-(`../MA_systems_hl8_project/MA_system_hl8/middleware.py`), one shared list,
-`a2a_agent_middleware`, assembled from `langchain.agents.middleware` public
-classes in the order spec Sec10 pins: `ModelCallLimit -> ToolCallLimit ->
-ToolError -> ToolRetry -> ModelRetry`, and two Supervisor-only classes,
-`RoundStabilityMiddleware` (stage 6) and `SaveReportGuardMiddleware`
-(stage 7).
+Two classes ported near-verbatim from an earlier iteration of this system,
+one shared list, `a2a_agent_middleware`, assembled from
+`langchain.agents.middleware` public classes in the order spec Sec10 pins:
+`ModelCallLimit -> ToolCallLimit -> ToolError -> ToolRetry -> ModelRetry`,
+and two Supervisor-only classes, `RoundStabilityMiddleware` (stage 6) and
+`SaveReportGuardMiddleware` (stage 7).
 
 The ordering invariant this module depends on -- `ToolErrorMiddleware` must
 sit outside `ToolRetryMiddleware`, and the retry must carry
 `on_failure="error"` -- was measured behaviourally at the stage-5 kickoff
-against the installed LangChain 1.3.15 (`insights.md`, 2026-08-17), not
-assumed from the version that was current when spec Sec10 was first written.
-`tests/test_middleware_order.py` pins both clauses.
+against the installed LangChain 1.3.15, not assumed from the version that
+was current when spec Sec10 was first written. An automated test pins both
+clauses.
 """
 
 from __future__ import annotations
@@ -104,7 +103,7 @@ class ReadUrlCapMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, Resp
     indistinguishable from a real tool error once `ToolErrorMiddleware`
     converts it to a string, and no offline test in this project invokes an
     agent asynchronously -- found only by the stage-5 live check against
-    real MCP tools (`insights.md`, 2026-08-17).
+    real MCP tools.
     """
 
     def __init__(self, max_calls: int | None) -> None:
@@ -172,8 +171,7 @@ class CriticVerificationMiddleware(
     hook would fall back to `AgentMiddleware`'s default `awrap_model_call`,
     which unconditionally raises `NotImplementedError` before the real
     model is ever called -- found only by the stage-5 live check, where the
-    Critic's structured response came back empty with no other symptom
-    (`insights.md`, 2026-08-17).
+    Critic's structured response came back empty with no other symptom.
     """
 
     def __init__(self, min_verification_calls: int = 1) -> None:
@@ -259,17 +257,16 @@ class LlmSpanMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, Respons
     configuration" needs exactly this).
 
     Placement is deliberate: **last in the middleware list, innermost**, at
-    every call site. `wrap_model_call` composes outermost-first
-    (CLAUDE.md, measured stage-5), so innermost means one span per actual
-    provider request -- `ModelRetryMiddleware`'s retries and
-    `CriticVerificationMiddleware`'s re-request each get their own span
-    with their own cost, instead of one span silently covering a whole
-    retry storm.
+    every call site. `wrap_model_call` composes outermost-first (measured
+    stage-5), so innermost means one span per actual provider request --
+    `ModelRetryMiddleware`'s retries and `CriticVerificationMiddleware`'s
+    re-request each get their own span with their own cost, instead of one
+    span silently covering a whole retry storm.
 
     Defines **both** `wrap_model_call` and `awrap_model_call` -- the
-    CLAUDE.md invariant measured at stage 5: every A2A executor and the
-    Supervisor invoke via `ainvoke`, and the base class's async default
-    raises `NotImplementedError` before the real model is ever called.
+    invariant measured at stage 5: every A2A executor and the Supervisor
+    invoke via `ainvoke`, and the base class's async default raises
+    `NotImplementedError` before the real model is ever called.
     """
 
     def __init__(self, role: str, provider: str, model: str) -> None:
@@ -347,7 +344,7 @@ class LlmSpanMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, Respons
 def _tool_error_to_message(exc: Exception, request: ToolCallRequest) -> str:
     """Names the exception type rather than echoing its message, keeping
     internal detail out of the model's context (the library's own guidance)
-    while preserving hl8's "an error is data" invariant."""
+    while preserving this project's "an error is data" invariant."""
     return f"ERROR: {request.tool_call['name']} failed ({type(exc).__name__})"
 
 
@@ -378,9 +375,9 @@ def a2a_agent_middleware(
     `ToolRetryMiddleware` is constructed with `on_failure="error"` and
     `jitter=True`. Both are load-bearing, not defaults restated for
     clarity: without `on_failure="error"` the outer `ToolErrorMiddleware`'s
-    handler never fires (measured, `insights.md` 2026-08-17); `jitter=True`
-    exists because `evals/run_eval.py` runs dataset examples concurrently
-    against one SearchMCP (spec Sec9's retry policy).
+    handler never fires (measured 2026-08-17); `jitter=True` exists because
+    `evals/run_eval.py` runs dataset examples concurrently against one
+    SearchMCP (spec Sec9's retry policy).
     """
     return [
         ModelCallLimitMiddleware(run_limit=model_call_limit),

@@ -47,8 +47,9 @@
   rationale: >-
     The ingested survey is dated April 2024 -- this question can only be
     answered from the web, and a stale-only answer (citing 2024-era
-    frameworks as if current) would be a freshness failure. The hl8-donor
-    equivalent of this row is what first surfaced that failure mode.
+    frameworks as if current) would be a freshness failure. The equivalent
+    row in an earlier iteration of this project is what first surfaced that
+    failure mode.
 
 - id: core-agent-vs-rag-boundary
   question: >-

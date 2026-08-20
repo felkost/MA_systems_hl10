@@ -1,8 +1,8 @@
 """Structured outputs shared by the Planner, the Critic and the report write
-path. Ported whole from the hl8 donor
-(`../MA_systems_hl8_project/MA_system_hl8/schemas.py`, stage-4 kickoff),
-unchanged: field sets for `ResearchPlan` and `CritiqueResult` are copied
-verbatim from the assignment, not designed from scratch --
+path. Ported whole from this project's predecessor implementation
+(stage-4 kickoff), unchanged: field sets for `ResearchPlan` and
+`CritiqueResult` are copied verbatim from the assignment, not designed
+from scratch --
 `sources_to_check` stays `list[str]` rather than a `Literal`, because its own
 description allows the model to answer "both", which a
 `Literal["knowledge_base", "web"]` would reject. `CritiqueResult` and
@@ -114,9 +114,9 @@ class CritiqueResult(BaseModel):
 # Shared by both coordination paths' Researcher input: the Supervisor's
 # delegation wrapper paraphrases the user's request into a plan or a
 # revision task, and a paraphrase drops whatever the coordinator did not
-# think mattered -- hl8 measured a coordinator dropping context in five of
-# six paraphrases. Forwarding the user's own wording alongside the current
-# task text does not depend on the coordinator remembering to.
+# think mattered -- measured previously: a coordinator dropping context in
+# five of six paraphrases. Forwarding the user's own wording alongside the
+# current task text does not depend on the coordinator remembering to.
 RESEARCH_INPUT_TEMPLATE = (
     "Original request: {request}\n\nYour task for this round:\n{task}"
 )
