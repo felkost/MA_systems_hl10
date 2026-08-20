@@ -21,6 +21,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from evals.worksheet import worksheet_digest as _worksheet_digest
+
 _STRICT_CONFIG = ConfigDict(extra="forbid")
 
 _Verdict = Literal["PASS", "FAIL"] | None
@@ -57,6 +59,14 @@ class HumanLabelSet(BaseModel):
     addresses the question is refused exactly like one that answers it
     honestly `False`, since either way the ordering this module exists to
     prove has not been established.
+
+    `worksheet_digest`/`labelled_at` (stage 10c, decision D2) are optional:
+    a label file carrying a digest is checked against a re-render of the
+    exact worksheet it claims to be labelled from (`verify_worksheet`) --
+    the property mtime was always a proxy for, stated directly and made
+    checkable by a third party rather than inferred from a file timestamp. A
+    label file with no digest (every file before stage 10c) falls back to
+    the plain mtime guard `evals.score` already applies.
     """
 
     model_config = _STRICT_CONFIG
@@ -64,6 +74,8 @@ class HumanLabelSet(BaseModel):
     run_name: str
     labelled_before_scoring: bool
     labels: list[HumanLabel]
+    worksheet_digest: str | None = None
+    labelled_at: str | None = None
 
 
 def load_labels(path: str | Path) -> HumanLabelSet:
@@ -123,4 +135,42 @@ def validate_against_run(label_set: HumanLabelSet, run_dir: str | Path) -> None:
         raise LabelValidationError(
             f"label(s) reference (run_index, case_id) pair(s) not found "
             f"under {packs_dir}: {', '.join(missing)}"
+        )
+
+
+def verify_worksheet(label_set: HumanLabelSet, worksheet_text: str) -> None:
+    """Refuse a label set whose claimed `worksheet_digest` does not match
+    `worksheet_text` -- the content-addressed half of the pre-registration
+    guard (stage 10c, decision D2).
+
+    A no-op when `label_set.worksheet_digest` is `None`: a legacy label
+    file made no such claim, and this function must not invent a
+    requirement it never made -- `evals.score` falls back to the mtime
+    guard for that case instead.
+
+    Parameters
+    ----------
+    worksheet_text : str
+        The worksheet as re-rendered *now*, from the packs on disk, for
+        exactly the `(run_index, case_id)` pairs `label_set` labels
+        (`evals.worksheet.render_worksheet` over
+        `evals.worksheet.load_entries(..., pairs)`) -- never the text a
+        labeller was shown at the time, which this module has no way to
+        recover and does not attempt to.
+
+    Raises
+    ------
+    LabelValidationError
+        The digests differ -- the worksheet the labeller saw does not match
+        the evidence being scored against today.
+    """
+    if label_set.worksheet_digest is None:
+        return
+    actual = _worksheet_digest(worksheet_text)
+    if actual != label_set.worksheet_digest:
+        raise LabelValidationError(
+            f"label file claims worksheet_digest {label_set.worksheet_digest!r} "
+            f"but the worksheet re-rendered from the packs on disk digests to "
+            f"{actual!r} -- the worksheet the labeller saw does not match the "
+            "evidence being scored against"
         )

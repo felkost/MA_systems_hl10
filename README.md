@@ -297,10 +297,20 @@ judge call per case, not another live run.
 packs twice and the two passes disagreed by up to 20 percentage points on one
 rubric item, with another item's kappa moving from 1.0 to 0.0 — the judge is
 a sampling model, and its run-to-run variance can exceed the effect being
-measured. The bootstrap interval in `summary-<version>.json` covers
-resampling of the **cases**, not of the **judge**. Until `score.py` gains a
-repeat argument — stage 10c's work — run it more than once before quoting any
-figure as a result.
+measured. `--passes N` (stage 10c) now scores the same corpus N times and
+reports **two** intervals per rubric item in `summary-<version>.json`: the
+existing one resamples the **cases**, a new `judge_repeat_ci_low`/`_ci_high`
+resamples the **passes**, computed on the intersection of cases scored in
+every pass. **Measured across three complete, evenly-distributed passes,
+this confirms stage 10b's finding rather than shrinking it**: the same
+rubric item moves across a 20.0 percentage-point range — the same order of
+magnitude 10b saw, not a smaller one. A two-pass figure taken mid-measurement
+(before the third pass finished) showed only 6.2 points and would have been
+the wrong number to publish; it looked like 10b's finding was mostly an
+unlucky pair of passes, and the third pass showed that reading was itself
+the unlucky-pair artefact. Never quote a single-pass figure as final —
+`--passes 1` (the default) carries no judge-repeat interval at all — and
+treat even a two-pass figure as provisional until a third pass confirms it.
 
 ## Cleanup
 
@@ -340,7 +350,7 @@ the repository; deleting one is a tracked change like any other.
 - [x] Stage 9 — Langfuse + OpenTelemetry: one question, one trace
 - [x] Stage 10a — evaluation tooling: golden dataset, judge, auto-approve HITL harness, dataset runner
 - [x] Stage 10b — real runs, error analysis, statistics (36-trace sweep, nine-category taxonomy, rubric v1 -> v2 derived from it, five-item scores with bootstrap CIs; **three of five items reported unvalidated** once both scoring passes count, six system defects recorded and deliberately unfixed)
-- [ ] Stage 10c — judge run-to-run variance (n >= 3 scoring) and independent human labels
+- [x] Stage 10c — judge run-to-run variance (n >= 3 scoring, `--passes N`) and independent human labels (24 traces, spec Sec13.6 partly closed: `citation_reliability` now validated). F10 confirms stage 10b's finding at the same order of magnitude (20 pp spread across three complete, evenly-distributed passes) rather than shrinking it
 - [ ] Stage 10d — narrow hardening: the two most serious defects the sweep found, re-measured
 - [ ] Stage 11 — final report (EN/UA)
 

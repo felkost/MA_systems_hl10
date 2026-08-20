@@ -99,6 +99,45 @@ class EvidencePack:
     saved_report_content: str = ""
 
 
+def pack_filename(run_index: int, case_id: str) -> str:
+    """`<run_index>__<case_id>.json` -- the exact naming
+    `evals.run_eval._persist_pack` writes, and the inverse of
+    `parse_pack_filename`."""
+    return f"{run_index:02d}__{case_id}.json"
+
+
+def parse_pack_filename(path: str | Path) -> tuple[int, str]:
+    """`<run_index>__<case_id>.json` -> `(run_index, case_id)`."""
+    run_index_str, _, case_id = Path(path).stem.partition("__")
+    return int(run_index_str), case_id
+
+
+def pack_from_dict(data: dict[str, Any]) -> EvidencePack:
+    """The inverse of `dataclasses.asdict(pack)` -- reconstructs the nested
+    `ToolCall`/`LlmCall` dataclasses a persisted pack flattened to plain
+    dicts on write.
+
+    Fields added after a pack was written default rather than raising: a
+    run set from before fix F1 carries no `saved_report_content`, and
+    should score on every item that does not need it instead of failing to
+    load. `python -m evals.reassemble <run_dir>` backfills such a set
+    offline.
+    """
+    return EvidencePack(
+        trace_id=data["trace_id"],
+        tool_calls=[ToolCall(**call) for call in data["tool_calls"]],
+        llm_calls=[LlmCall(**call) for call in data["llm_calls"]],
+        verdict=data["verdict"],
+        gaps=list(data["gaps"]),
+        final_answer=data["final_answer"],
+        latency_ms=data.get("latency_ms", 0.0),
+        agent_calls=list(data.get("agent_calls", [])),
+        critic_revision_count=data.get("critic_revision_count", 0),
+        saved_report_path=data.get("saved_report_path"),
+        saved_report_content=data.get("saved_report_content", ""),
+    )
+
+
 def find_case_trace_id(span_dump_dir: str | Path, thread_id: str) -> str | None:
     """Locate the trace id of the `repl.question` root span carrying
     `thread_id` -- the seam connecting the runner's own per-case
