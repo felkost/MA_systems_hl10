@@ -5,10 +5,10 @@ understand the domain, not a deep read of any one source. Stateless per
 invocation: no checkpointer, one human message in, one `ResearchPlan` out.
 
 Ported from this project's predecessor implementation, with tools as a
-factory *parameter* rather than a module-level
-import -- they arrive over the network at request time and cannot be
-imported (spec Sec2, "Rebuild"). The prompt-version registry is gone
-(`config.PLANNER_PROMPT`, a plain constant), and the model is built through
+factory *parameter* rather than a module-level import -- they arrive over
+the network at request time and cannot be imported (spec Sec2, "Rebuild").
+The prompt-version registry is gone (`config.PLANNER_PROMPT`, a plain
+constant), and the model is built through
 `models.build_chat_model(settings, "planner")` rather than an inline
 `ChatOpenAI` (spec Sec16).
 

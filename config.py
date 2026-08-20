@@ -90,9 +90,9 @@ class Settings(BaseSettings):
 
     # -- Researcher / Critic agent budgets (stage 5): ported from this
     # project's predecessor implementation with the same defaults and
-    # bounds. The Planner's own budget (4)
-    # stays a module constant in agents/planner.py -- experiments (stage 11)
-    # vary these two, not that one.
+    # bounds. The Planner's own budget (4) stays a module constant in
+    # agents/planner.py -- experiments (stage 11) vary these two, not that
+    # one.
     researcher_max_tool_calls: int = Field(default=8, ge=1, le=50)
     critic_max_tool_calls: int = Field(default=5, ge=1, le=50)
     # Pages read_url may open before the next search, enforced by

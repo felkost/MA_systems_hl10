@@ -43,8 +43,8 @@ CRITIC_ALLOWLIST: tuple[str, ...] = ("web_search", "read_url", "knowledge_search
 # Passing the bare schema lets the framework auto-detect a strategy and
 # build it *without* strict, which leaves the provider free to treat the
 # schema's `required` list as a hint and return a verdict missing `verdict`
-# itself -- the exact failure measured previously. Naming the strategy explicitly is
-# what puts "strict": true on the wire.
+# itself -- the exact failure measured previously. Naming the strategy
+# explicitly is what puts "strict": true on the wire.
 CRITIC_RESPONSE_FORMAT = ProviderStrategy(CritiqueResult, strict=True)
 
 

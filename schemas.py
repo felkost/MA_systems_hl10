@@ -1,8 +1,7 @@
 """Structured outputs shared by the Planner, the Critic and the report write
-path. Ported whole from this project's predecessor implementation
-(stage-4 kickoff), unchanged: field sets for `ResearchPlan` and
-`CritiqueResult` are copied verbatim from the assignment, not designed
-from scratch --
+path. Ported whole from this project's predecessor implementation (stage-4
+kickoff), unchanged: field sets for `ResearchPlan` and `CritiqueResult` are
+copied verbatim from the assignment, not designed from scratch --
 `sources_to_check` stays `list[str]` rather than a `Literal`, because its own
 description allows the model to answer "both", which a
 `Literal["knowledge_base", "web"]` would reject. `CritiqueResult` and

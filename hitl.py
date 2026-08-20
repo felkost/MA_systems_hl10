@@ -133,10 +133,10 @@ def render_save_status(outcomes: Sequence[BaseMessage]) -> str:
     D8: an earlier iteration of this project measured a real session where
     the model's closing text claimed "I have saved the report" after two
     human rejections, with nothing on disk. The truth source is the
-    `save_report` `ToolMessage`'s own
-    content -- never an `AIMessage`'s prose -- and `report_mcp.save_report`
-    never raises, so a failed write is recognised by its `ERROR:` prefix,
-    the same convention every tool in this project uses.
+    `save_report` `ToolMessage`'s own content -- never an `AIMessage`'s
+    prose -- and `report_mcp.save_report` never raises, so a failed write
+    is recognised by its `ERROR:` prefix, the same convention every tool in
+    this project uses.
 
     A tool loaded through `langchain-mcp-adapters` (the real
     `save_report_tool`, unlike every offline test's plain-string `@tool`

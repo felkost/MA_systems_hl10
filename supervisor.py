@@ -6,9 +6,9 @@ installed a2a-sdk 1.1.2 -- re-verified at this stage's kickoff via a
 nine-point client-path audit (2026-08-17).
 
 **Layering (spec Sec6 rule 2):** this module never imports `a2a_servers` or
-`agents/*`. Every delegation crosses a
-real network hop -- importing an agent factory directly would work perfectly
-and violate the assignment's central requirement invisibly.
+`agents/*`. Every delegation crosses a real network hop -- importing an
+agent factory directly would work perfectly and violate the assignment's
+central requirement invisibly.
 
 **D1, the four-class error taxonomy applied for real:** only a genuine
 policy failure (`SubAgentResponseError`) is caught inside a delegation tool.

@@ -20,8 +20,7 @@ three A2A servers would race SearchMCP's cold start (3-10s of imports alone,
 measured at stage 2) and die with `sys.exit(1)`. Two phases -- (SearchMCP,
 ReportMCP), then (Planner, Researcher, Critic) -- resolves it, and matches
 the brief's own documented launch order ("Порядок запуску"). Stated cost:
-boot wall-clock is the sum of the two phases' readiness waits, not their
-max.
+boot wall-clock is the sum of the two phases' readiness waits, not their max.
 
 No auth token handling lives here: each child's own `main()` calls
 `auth.build_token_verifier(settings)` itself (search_mcp.py, report_mcp.py,

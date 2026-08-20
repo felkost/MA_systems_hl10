@@ -106,8 +106,8 @@ def _resolve_inside_output(filename: str, output_root: Path) -> Path:
     resolved = (output_root / candidate.name).resolve()
     # os.path.normcase, not a bare `==`: on Windows, "F:/X/OUTPUT" ==
     # "F:/X/output" is False even though the two name one directory
-    # (measured 2026-08-16) -- a raw comparison here would
-    # refuse legitimate writes whenever case differs.
+    # (measured 2026-08-16) -- a raw comparison here would refuse
+    # legitimate writes whenever case differs.
     if os.path.normcase(str(resolved.parent)) != os.path.normcase(
         str(output_root.resolve())
     ):
