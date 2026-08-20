@@ -39,13 +39,31 @@ PRICE_TABLE: dict[str, ModelPrice] = {
         output_usd_per_million=1.60,
         verified_on="2026-08-19",
     ),
-    # This project's configured judge model (JUDGE_PROVIDER=openrouter,
-    # insights.md 2026-08-19 decision), verified against OpenRouter's own
-    # model catalogue page for prompts under its 200k-token tier.
+    # This project's configured judge model through stage 10c's first
+    # measurement (JUDGE_PROVIDER=openrouter), verified against
+    # OpenRouter's own model catalogue page for prompts under its
+    # 200k-token tier. Superseded by qwen/qwen3-coder below -- kept so the
+    # stage-10b and early-10c figures it priced stay reproducible.
     "google/gemini-2.5-pro": ModelPrice(
         input_usd_per_million=1.25,
         output_usd_per_million=10.00,
         verified_on="2026-08-19",
+    ),
+    # This project's configured judge model as of 2026-08-20 (replaces
+    # google/gemini-2.5-pro): google/gemini-2.5-pro is the family the
+    # original spec measured with, but qwen/qwen-2.5-coder-32b-instruct --
+    # the model actually requested -- does not report OpenRouter's
+    # `structured_outputs` capability (checked live against the OpenRouter
+    # catalogue, 2026-08-20) and is refused by
+    # `models.assert_structured_output_supported` before it can be used.
+    # qwen/qwen3-coder is the closest family match that does report the
+    # capability, confirmed by a live judge() call against a real pack
+    # before this price was recorded. Verified against OpenRouter's own
+    # catalogue.
+    "qwen/qwen3-coder": ModelPrice(
+        input_usd_per_million=0.30,
+        output_usd_per_million=1.00,
+        verified_on="2026-08-20",
     ),
 }
 

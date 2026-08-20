@@ -21,19 +21,26 @@ import asyncio
 import json
 import logging
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
 from langchain_core.language_models import BaseChatModel
 
-from config import load_settings
+from config import Settings, load_settings
 from evals import judge as judge_module
 from evals import statistics
+from evals import worksheet as worksheet_module
 from evals.dataset import GoldenCase, load_all
-from evals.evidence import EvidencePack, LlmCall, ToolCall
-from evals.labels import HumanLabelSet, load_labels, validate_against_run
+from evals.evidence import parse_pack_filename, pack_from_dict
+from evals.labels import (
+    HumanLabelSet,
+    load_labels,
+    validate_against_run,
+    verify_worksheet,
+)
 from evals.metrics import metrics_of
+from evals import pricing
 from paths import PROJECT_ROOT
 
 _RUBRIC_ITEMS = (
@@ -61,12 +68,14 @@ class RubricVersionMismatchError(ScoringError):
 
 @dataclass
 class CaseScore:
-    """One case's judged outcome -- one line of `scores-<version>.jsonl`."""
+    """One case's judged outcome -- one line of `scores-<version>.jsonl`
+    (or `scores-<version>-p<N>.jsonl` under `passes > 1`, stage 10c)."""
 
     run_index: int
     case_id: str
     verdict: dict[str, Any]
     metrics: dict[str, Any]
+    pass_index: int = 1
 
     def to_json_line(self) -> str:
         return json.dumps(asdict(self))
@@ -74,16 +83,17 @@ class CaseScore:
 
 @dataclass
 class CaseScoreError:
-    """One (run_index, case_id) pair that could not be judged -- recorded
-    instead of aborting the batch (live-found 2026-08-20: gemini-2.5-pro
-    returned an empty response for a pack whose saved report was itself
-    jailbreak/prompt-disclosure content, and the JSON parse failure that
-    followed crashed the whole run before any of the other 35 cases had a
-    chance to be scored)."""
+    """One (run_index, case_id) pair that could not be judged in one pass --
+    recorded instead of aborting the batch (live-found 2026-08-20:
+    gemini-2.5-pro returned an empty response for a pack whose saved report
+    was itself jailbreak/prompt-disclosure content, and the JSON parse
+    failure that followed crashed the whole run before any of the other 35
+    cases had a chance to be scored)."""
 
     run_index: int
     case_id: str
     error: str
+    pass_index: int = 1
 
 
 @dataclass
@@ -92,40 +102,10 @@ class ScoringResult:
     errors: list[CaseScoreError]
     summary: dict[str, Any]
     scores_path: Path
+    """The first (or only) pass's scores file -- kept for callers written
+    before `passes` existed. See `scores_paths` for every pass."""
     summary_path: Path
-
-
-def _parse_pack_filename(path: Path) -> tuple[int, str]:
-    """`<run_index>__<case_id>.json` -> `(run_index, case_id)` -- the exact
-    naming `evals.run_eval._persist_pack` writes."""
-    run_index_str, _, case_id = path.stem.partition("__")
-    return int(run_index_str), case_id
-
-
-def _pack_from_dict(data: dict[str, Any]) -> EvidencePack:
-    """The inverse of `dataclasses.asdict(pack)` -- reconstructs the nested
-    `ToolCall`/`LlmCall` dataclasses `_persist_pack` flattened to plain
-    dicts on write.
-
-    Fields added after a pack was written default rather than raising: a
-    run set from before fix F1 carries no `saved_report_content`, and
-    should score on every item that does not need it instead of failing to
-    load. `python -m evals.reassemble <run_dir>` backfills such a set
-    offline.
-    """
-    return EvidencePack(
-        trace_id=data["trace_id"],
-        tool_calls=[ToolCall(**call) for call in data["tool_calls"]],
-        llm_calls=[LlmCall(**call) for call in data["llm_calls"]],
-        verdict=data["verdict"],
-        gaps=list(data["gaps"]),
-        final_answer=data["final_answer"],
-        latency_ms=data.get("latency_ms", 0.0),
-        agent_calls=list(data.get("agent_calls", [])),
-        critic_revision_count=data.get("critic_revision_count", 0),
-        saved_report_path=data.get("saved_report_path"),
-        saved_report_content=data.get("saved_report_content", ""),
-    )
+    scores_paths: list[Path] = field(default_factory=list)
 
 
 def _mean(values: list[float]) -> float:
@@ -148,33 +128,55 @@ def _metric_aggregates(scores: list[CaseScore]) -> dict[str, Any]:
 
 
 def _load_matching_labels(
-    label_path: Path, *, run_name: str, run_dir: Path, prior_scores_mtime: float | None
+    label_path: Path,
+    *,
+    run_name: str,
+    run_dir: Path,
+    cases: Sequence[GoldenCase],
+    prior_scores_mtime: float | None,
 ) -> tuple[HumanLabelSet | None, str | None]:
-    """Resolve the human-label set to score agreement against, or the
+    """Resolve one human-label set to score agreement against, or the
     reason none applies.
+
+    Two pre-registration checks, in order (stage 10c, decision D2 --
+    replacing a single mtime check that a same-day comment edit to this
+    project's own tracked label file proved could invalidate a label set by
+    accident): a label file carrying `worksheet_digest` is verified against
+    a fresh re-render of the exact worksheet it claims to be labelled from
+    (`evals.labels.verify_worksheet` -- raises on a mismatch, propagated,
+    not soft-skipped: a wrong digest is a structural problem with the file,
+    the same class as a missing attestation). A label file with no digest
+    (every file predating stage 10c) falls back to the original mtime
+    check -- modified after a *prior* scores file for this run/version
+    already existed, soft-skipped with a reason, since mtime alone cannot
+    distinguish "labelled after reading the verdicts" from "someone edited
+    a comment".
 
     Returns
     -------
     (label_set, skip_reason) : tuple
         Exactly one is non-`None`. `label_set` is only returned when the
-        label file exists, names this exact run, validates against the
-        packs actually on disk, and -- the pre-registration guard's second
-        half (spec Sec5.6) -- was not modified after a *prior* scores file
-        for this run/version already existed (a label written after
-        already implies the human could have read the judge's verdicts).
+        label file exists, names this exact run, passes whichever guard
+        applies, and validates against the packs actually on disk.
     """
     if not label_path.exists():
         return None, None
     label_set = load_labels(label_path)  # raises LabelValidationError, not caught here
     if label_set.run_name != run_name:
         return None, f"label file labels run {label_set.run_name!r}, not {run_name!r}"
-    if (
+    if label_set.worksheet_digest is not None:
+        pairs = [(label.run_index, label.case_id) for label in label_set.labels]
+        entries = worksheet_module.load_entries(run_dir, cases, pairs)
+        text = worksheet_module.render_worksheet(entries)
+        verify_worksheet(label_set, text)  # raises LabelValidationError, propagated
+    elif (
         prior_scores_mtime is not None
         and label_path.stat().st_mtime > prior_scores_mtime
     ):
         return None, (
             "label file was modified after a scores file for this run/version "
-            "already existed -- labels must be written before scoring, not after"
+            "already existed, and carries no worksheet_digest to check instead "
+            "-- labels must be written before scoring, not after"
         )
     validate_against_run(label_set, run_dir)
     return label_set, None
@@ -195,17 +197,104 @@ def _kappa_inputs(
     return judge_values, human_values
 
 
+def _kappa_block(
+    label_set: HumanLabelSet | None, scores: list[CaseScore], item: str
+) -> dict[str, Any]:
+    """Judge/human agreement for one rubric item -- `kappa_n` (stage 10c) is
+    the count of paired values kappa was actually computed from, previously
+    silently dropped by `_kappa_inputs`' own `continue` with no field
+    recording how many pairs survived."""
+    if label_set is None:
+        return {
+            "kappa": None,
+            "kappa_ci_low": None,
+            "kappa_ci_high": None,
+            "kappa_n": 0,
+        }
+    judge_values, human_values = _kappa_inputs(label_set, scores, item)
+    paired = [
+        (j, h)
+        for j, h in zip(judge_values, human_values)
+        if j is not None and h is not None
+    ]
+    if len(paired) < 2:
+        return {
+            "kappa": None,
+            "kappa_ci_low": None,
+            "kappa_ci_high": None,
+            "kappa_n": len(paired),
+        }
+    paired_judge = [p[0] for p in paired]
+    paired_human = [p[1] for p in paired]
+    kappa = statistics.cohens_kappa(paired_judge, paired_human)
+    kappa_ci = statistics.bootstrap_kappa_ci(paired_judge, paired_human)
+    return {
+        "kappa": kappa,
+        "kappa_ci_low": kappa_ci[0],
+        "kappa_ci_high": kappa_ci[1],
+        "kappa_n": len(paired),
+    }
+
+
+def _judge_repeat_block(
+    pass_maps: list[dict[tuple[int, str], CaseScore]], item: str
+) -> dict[str, Any]:
+    """Judge run-to-run variance for one rubric item (F10, spec Sec13.9
+    amendment): a bootstrap interval over per-pass pass rates, computed only
+    on the `(run_index, case_id)` pairs scored in *every* pass (decision
+    D7) -- a pass that errored on a case must not silently make that case's
+    absence look like agreement.
+
+    `None` in every field when there is only one pass (nothing repeated to
+    measure) or when the item has no applicable case in the intersection.
+    """
+    empty = {
+        "judge_repeat_ci_low": None,
+        "judge_repeat_ci_high": None,
+        "judge_repeat_n_passes": None,
+        "judge_repeat_pass_rates": None,
+        "judge_repeat_intersection_n": None,
+    }
+    if len(pass_maps) < 2:
+        return empty
+
+    common_keys: set[tuple[int, str]] = set(pass_maps[0])
+    for pass_map in pass_maps[1:]:
+        common_keys &= set(pass_map)
+
+    pass_rates: list[float] = []
+    for pass_map in pass_maps:
+        verdicts = [pass_map[key].verdict[item]["verdict"] for key in common_keys]
+        applicable = [v for v in verdicts if v is not None]
+        if not applicable:
+            return {**empty, "judge_repeat_intersection_n": len(common_keys)}
+        pass_rates.append(sum(1 for v in applicable if v == "PASS") / len(applicable))
+
+    ci_low, ci_high = statistics.across_pass_interval(pass_rates)
+    return {
+        "judge_repeat_ci_low": ci_low,
+        "judge_repeat_ci_high": ci_high,
+        "judge_repeat_n_passes": len(pass_maps),
+        "judge_repeat_pass_rates": pass_rates,
+        "judge_repeat_intersection_n": len(common_keys),
+    }
+
+
 def _summarize(
-    scores: list[CaseScore],
     *,
+    primary_scores: list[CaseScore],
+    pass_maps: list[dict[tuple[int, str], CaseScore]],
     rubric_version: str,
-    label_set: HumanLabelSet | None,
-    kappa_skipped_reason: str | None,
+    primary_label_set: HumanLabelSet | None,
+    primary_kappa_skipped_reason: str | None,
+    independent_label_set: HumanLabelSet | None,
+    independent_kappa_skipped_reason: str | None,
     errors: list[CaseScoreError],
+    judge_cost_usd: float | None,
 ) -> dict[str, Any]:
     items: dict[str, Any] = {}
     for item in _RUBRIC_ITEMS:
-        verdicts = [score.verdict[item]["verdict"] for score in scores]
+        verdicts = [score.verdict[item]["verdict"] for score in primary_scores]
         applicable = [v for v in verdicts if v is not None]
         ci_low: float | None
         ci_high: float | None
@@ -217,42 +306,130 @@ def _summarize(
             pass_rate = None
             ci_low = ci_high = None
 
-        kappa: float | None = None
-        kappa_ci: tuple[float, float] | None = None
-        if label_set is not None:
-            judge_values, human_values = _kappa_inputs(label_set, scores, item)
-            paired = [
-                (j, h)
-                for j, h in zip(judge_values, human_values)
-                if j is not None and h is not None
-            ]
-            if len(paired) >= 2:
-                paired_judge = [p[0] for p in paired]
-                paired_human = [p[1] for p in paired]
-                kappa = statistics.cohens_kappa(paired_judge, paired_human)
-                kappa_ci = statistics.bootstrap_kappa_ci(paired_judge, paired_human)
-
-        items[item] = {
+        entry: dict[str, Any] = {
             "pass_rate": pass_rate,
             "ci_low": ci_low,
             "ci_high": ci_high,
             "n_applicable": len(applicable),
             "discriminates": statistics.discriminates(verdicts),
-            "kappa": kappa,
-            "kappa_ci_low": kappa_ci[0] if kappa_ci is not None else None,
-            "kappa_ci_high": kappa_ci[1] if kappa_ci is not None else None,
         }
+        entry.update(_kappa_block(primary_label_set, primary_scores, item))
+        entry.update(_judge_repeat_block(pass_maps, item))
+        items[item] = entry
 
     summary: dict[str, Any] = {
         "rubric_version": rubric_version,
         "items": items,
-        "metrics": _metric_aggregates(scores),
+        "metrics": _metric_aggregates(primary_scores),
         "n_errors": len(errors),
         "errors": [asdict(error) for error in errors],
+        "n_passes": len(pass_maps),
+        "judge_cost_usd": judge_cost_usd,
     }
-    if kappa_skipped_reason is not None:
-        summary["kappa_skipped_reason"] = kappa_skipped_reason
+    if primary_kappa_skipped_reason is not None:
+        summary["kappa_skipped_reason"] = primary_kappa_skipped_reason
+    if (
+        independent_label_set is not None
+        or independent_kappa_skipped_reason is not None
+    ):
+        summary["independent_label_agreement"] = {
+            "run_name": (
+                independent_label_set.run_name
+                if independent_label_set is not None
+                else None
+            ),
+            "n_labels": (
+                len(independent_label_set.labels)
+                if independent_label_set is not None
+                else 0
+            ),
+            "kappa_skipped_reason": independent_kappa_skipped_reason,
+            "items": {
+                item: _kappa_block(independent_label_set, primary_scores, item)
+                for item in _RUBRIC_ITEMS
+            },
+        }
     return summary
+
+
+async def _score_one_pass(
+    pack_files: list[Path],
+    resolved_cases: dict[str, GoldenCase],
+    judge_model: BaseChatModel | None,
+    settings: Settings,
+    judge_model_name: str,
+    scores_path: Path,
+    pass_index: int,
+) -> tuple[list[CaseScore], list[CaseScoreError], float | None]:
+    """One full pass over every pack: judge each, write one JSONL line per
+    success, record one `CaseScoreError` per failure. Returns the pass's
+    total judge cost (`None` the moment any one call's model is unpriced --
+    the same "no silent partial sum" discipline `evals.metrics` already
+    applies to agent cost)."""
+    scores: list[CaseScore] = []
+    errors: list[CaseScoreError] = []
+    call_costs: list[float | None] = []
+    with scores_path.open("w", encoding="utf-8") as handle:
+        for path in pack_files:
+            run_index, case_id = parse_pack_filename(path)
+            case = resolved_cases.get(case_id)
+            if case is None:
+                raise ScoringError(
+                    f"pack {path.name} references unknown case id {case_id!r}"
+                )
+            pack = pack_from_dict(json.loads(path.read_text(encoding="utf-8")))
+            usage: dict[str, int] = {}
+            try:
+                verdict = await judge_module.judge(
+                    settings, case, pack, model=judge_model, usage_sink=usage.update
+                )
+            except Exception as error:  # noqa: BLE001 -- one case's judge
+                # failure must not cost the other 35, already-paid-for
+                # calls; logged for a human to read, recorded as data,
+                # never silently dropped.
+                logging.getLogger("main").exception(
+                    "judging case %r (run %d, pass %d) failed: %s",
+                    case_id,
+                    run_index,
+                    pass_index,
+                    error,
+                )
+                errors.append(
+                    CaseScoreError(
+                        run_index=run_index,
+                        case_id=case_id,
+                        error=f"{type(error).__name__}: {error}",
+                        pass_index=pass_index,
+                    )
+                )
+                continue
+            if usage:
+                call_costs.append(
+                    pricing.cost_of(
+                        judge_model_name,
+                        input_tokens=usage.get("input_tokens", 0),
+                        output_tokens=usage.get("output_tokens", 0),
+                    )
+                )
+            verdict_data = verdict.model_dump()
+            score = CaseScore(
+                run_index=run_index,
+                case_id=case_id,
+                verdict=verdict_data,
+                metrics=asdict(metrics_of(pack)),
+                pass_index=pass_index,
+            )
+            scores.append(score)
+            handle.write(score.to_json_line() + "\n")
+            handle.flush()
+    pass_cost: float | None = (
+        None
+        if any(cost is None for cost in call_costs)
+        else (
+            sum(cost for cost in call_costs if cost is not None) if call_costs else None
+        )
+    )
+    return scores, errors, pass_cost
 
 
 async def score_run(
@@ -262,8 +439,10 @@ async def score_run(
     judge_model: BaseChatModel | None = None,
     rubric_version: str | None = None,
     label_path: Path | None = None,
+    independent_label_path: Path | None = None,
+    passes: int = 1,
 ) -> ScoringResult:
-    """Score every persisted pack under `run_dir / "packs"`.
+    """Score every persisted pack under `run_dir / "packs"`, `passes` times.
 
     Parameters
     ----------
@@ -279,10 +458,23 @@ async def score_run(
         see `RubricVersionMismatchError`.
     label_path : Path, optional
         Defaults to `evals/labels/human_labels.yaml`. Kappa is included in
-        the summary only when this file exists, names this exact run
-        (`run_metadata.json`'s `run_name`), and passes the pre-registration
-        guard (`evals.labels`, plus this module's own mtime-vs-prior-scores
-        check).
+        `summary["items"][<item>]` only when this file exists, names this
+        exact run (`run_metadata.json`'s `run_name`), and passes the
+        pre-registration guard (`_load_matching_labels`).
+    independent_label_path : Path, optional
+        A second, independent label set (stage 10c, decision D5) -- scored
+        the same way but reported under `summary["independent_label_agreement"]`,
+        never pooled with `label_path`'s figures. The two sets differ in
+        provenance; pooling them would produce a number about neither.
+    passes : int, default 1
+        Score the whole corpus this many times, each a fresh set of judge
+        calls (F10: judge run-to-run variance). `passes == 1` writes
+        `scores-<version>.jsonl`, byte-for-byte the pre-stage-10c filename
+        and summary shape. `passes > 1` writes `scores-<version>-p<N>.jsonl`
+        per pass and adds `judge_repeat_*` figures to each rubric item,
+        computed on the intersection of cases scored in every pass
+        (decision D7) -- never on a full-per-pass set that could shrink
+        differently pass to pass.
 
     Raises
     ------
@@ -291,6 +483,9 @@ async def score_run(
         Propagated, not caught -- an invalid label file is the human's
         mistake to fix, not something this function silently works around.
     """
+    if passes < 1:
+        raise ScoringError(f"passes must be >= 1, got {passes}")
+
     resolved_version = rubric_version or judge_module.JUDGE_RUBRIC_VERSION
     if resolved_version != judge_module.JUDGE_RUBRIC_VERSION:
         raise RubricVersionMismatchError(
@@ -311,76 +506,100 @@ async def score_run(
         case.id: case for case in (cases if cases is not None else load_all())
     }
 
-    scores_path = run_dir / f"scores-{resolved_version}.jsonl"
-    prior_scores_mtime = scores_path.stat().st_mtime if scores_path.exists() else None
+    canonical_scores_path = run_dir / f"scores-{resolved_version}.jsonl"
+    prior_scores_mtime = (
+        canonical_scores_path.stat().st_mtime
+        if canonical_scores_path.exists()
+        else None
+    )
     settings = load_settings()
+    _, judge_model_name = settings.resolved("judge")
 
-    scores: list[CaseScore] = []
-    errors: list[CaseScoreError] = []
-    with scores_path.open("w", encoding="utf-8") as handle:
-        for path in pack_files:
-            run_index, case_id = _parse_pack_filename(path)
-            case = resolved_cases.get(case_id)
-            if case is None:
-                raise ScoringError(
-                    f"pack {path.name} references unknown case id {case_id!r}"
-                )
-            pack = _pack_from_dict(json.loads(path.read_text(encoding="utf-8")))
-            try:
-                verdict = await judge_module.judge(
-                    settings, case, pack, model=judge_model
-                )
-            except Exception as error:  # noqa: BLE001 -- one case's judge
-                # failure must not cost the other 35, already-paid-for
-                # calls; logged for a human to read, recorded as data,
-                # never silently dropped.
-                logging.getLogger("main").exception(
-                    "judging case %r (run %d) failed: %s", case_id, run_index, error
-                )
-                errors.append(
-                    CaseScoreError(
-                        run_index=run_index,
-                        case_id=case_id,
-                        error=f"{type(error).__name__}: {error}",
-                    )
-                )
-                continue
-            verdict_data = verdict.model_dump()
-            score = CaseScore(
-                run_index=run_index,
-                case_id=case_id,
-                verdict=verdict_data,
-                metrics=asdict(metrics_of(pack)),
-            )
-            scores.append(score)
-            handle.write(score.to_json_line() + "\n")
-            handle.flush()
+    all_scores: list[CaseScore] = []
+    all_errors: list[CaseScoreError] = []
+    pass_maps: list[dict[tuple[int, str], CaseScore]] = []
+    scores_paths: list[Path] = []
+    pass_costs: list[float | None] = []
+    first_pass_scores: list[CaseScore] = []
+    for pass_index in range(1, passes + 1):
+        pass_scores_path = (
+            canonical_scores_path
+            if passes == 1
+            else run_dir / f"scores-{resolved_version}-p{pass_index}.jsonl"
+        )
+        scores_paths.append(pass_scores_path)
+        pass_scores, pass_errors, pass_cost = await _score_one_pass(
+            pack_files,
+            resolved_cases,
+            judge_model,
+            settings,
+            judge_model_name,
+            pass_scores_path,
+            pass_index,
+        )
+        if pass_index == 1:
+            first_pass_scores = pass_scores
+        all_scores.extend(pass_scores)
+        all_errors.extend(pass_errors)
+        pass_costs.append(pass_cost)
+        pass_maps.append({(s.run_index, s.case_id): s for s in pass_scores})
+
+    judge_cost_usd: float | None = (
+        None
+        if any(cost is None for cost in pass_costs)
+        else (
+            sum(cost for cost in pass_costs if cost is not None) if pass_costs else None
+        )
+    )
 
     run_name = _read_run_name(run_dir)
+    all_cases = list(resolved_cases.values())
     resolved_label_path = label_path if label_path is not None else _DEFAULT_LABEL_PATH
-    label_set, kappa_skipped_reason = _load_matching_labels(
+    primary_label_set, primary_kappa_skipped_reason = _load_matching_labels(
         resolved_label_path,
         run_name=run_name,
         run_dir=run_dir,
+        cases=all_cases,
         prior_scores_mtime=prior_scores_mtime,
     )
 
+    independent_label_set: HumanLabelSet | None = None
+    independent_kappa_skipped_reason: str | None = None
+    if independent_label_path is not None:
+        independent_label_set, independent_kappa_skipped_reason = _load_matching_labels(
+            independent_label_path,
+            run_name=run_name,
+            run_dir=run_dir,
+            cases=all_cases,
+            prior_scores_mtime=prior_scores_mtime,
+        )
+
+    # Pass 1's own scores are what `pass_rate`/`ci_low`/`ci_high`/
+    # `n_applicable`/`discriminates`/kappa are computed from, for every
+    # value of `passes` -- identical to the sole pass when `passes == 1`,
+    # so the headline per-item figures never depend on how many repeats
+    # were run.
     summary = _summarize(
-        scores,
+        primary_scores=first_pass_scores,
+        pass_maps=pass_maps,
         rubric_version=resolved_version,
-        label_set=label_set,
-        kappa_skipped_reason=kappa_skipped_reason,
-        errors=errors,
+        primary_label_set=primary_label_set,
+        primary_kappa_skipped_reason=primary_kappa_skipped_reason,
+        independent_label_set=independent_label_set,
+        independent_kappa_skipped_reason=independent_kappa_skipped_reason,
+        errors=all_errors,
+        judge_cost_usd=judge_cost_usd,
     )
     summary_path = run_dir / f"summary-{resolved_version}.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     return ScoringResult(
-        scores=scores,
-        errors=errors,
+        scores=all_scores,
+        errors=all_errors,
         summary=summary,
-        scores_path=scores_path,
+        scores_path=scores_paths[0],
         summary_path=summary_path,
+        scores_paths=scores_paths,
     )
 
 
@@ -409,16 +628,49 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Must match the currently active evals.judge.JUDGE_RUBRIC_VERSION; "
         "defaults to it",
     )
+    parser.add_argument(
+        "--passes",
+        type=int,
+        default=1,
+        help="Score the corpus this many times (stage 10c, F10: judge "
+        "run-to-run variance). 1 (default) writes scores-<version>.jsonl "
+        "exactly as before; >1 writes scores-<version>-p<N>.jsonl per pass "
+        "and adds judge-repeat intervals to the summary",
+    )
+    parser.add_argument(
+        "--independent-labels",
+        default=None,
+        help="Path to a second, independently-labelled file (stage 10c, "
+        "decision D5) -- scored and reported separately from --labels, "
+        "never pooled with it",
+    )
+    parser.add_argument(
+        "--labels",
+        default=None,
+        help="Path to the primary human-label file; defaults to "
+        "evals/labels/human_labels.yaml",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     run_dir = Path(args.run_set)
-    result = asyncio.run(score_run(run_dir, rubric_version=args.rubric_version))
+    result = asyncio.run(
+        score_run(
+            run_dir,
+            rubric_version=args.rubric_version,
+            passes=args.passes,
+            label_path=Path(args.labels) if args.labels else None,
+            independent_label_path=(
+                Path(args.independent_labels) if args.independent_labels else None
+            ),
+        )
+    )
     print(
-        f"[system] {len(result.scores)} case(s) scored -- "
-        f"{result.scores_path}, {result.summary_path}"
+        f"[system] {len(result.scores)} case(s) scored across "
+        f"{len(result.scores_paths)} pass(es) -- "
+        f"{', '.join(str(p) for p in result.scores_paths)}; {result.summary_path}"
     )
     if result.errors:
         print(
@@ -426,7 +678,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             '(recorded in the summary\'s "errors" field, not silently dropped):'
         )
         for error in result.errors:
-            print(f"  - run {error.run_index} {error.case_id}: {error.error}")
+            print(
+                f"  - pass {error.pass_index} run {error.run_index} "
+                f"{error.case_id}: {error.error}"
+            )
 
 
 if __name__ == "__main__":

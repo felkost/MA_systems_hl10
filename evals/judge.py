@@ -16,12 +16,12 @@ model is the checkable configuration; `models.assert_structured_output_supported
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Callable, Literal
 
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ProviderStrategy
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 import models
@@ -283,6 +283,7 @@ async def judge(
     pack: EvidencePack,
     *,
     model: BaseChatModel | None = None,
+    usage_sink: Callable[[dict[str, int]], None] | None = None,
 ) -> JudgeVerdict:
     """Grade one run of `case` against `pack`.
 
@@ -295,6 +296,13 @@ async def judge(
         Chat model to use instead of the one `settings` resolves via role
         `"judge"` -- tests inject a scripted fake here instead of reaching
         a real provider.
+    usage_sink : callable, optional
+        Called once with `{"input_tokens": int, "output_tokens": int}` if
+        the model's response carries `usage_metadata` (stage 10c: nothing
+        priced a judge call before this -- `evals/pricing.py::cost_of`
+        prices agent spans, and the judge binds no middleware of its own).
+        Never called when usage is unavailable; a caller that does not pass
+        one gets exactly the prior behaviour.
 
     Returns
     -------
@@ -310,5 +318,28 @@ async def judge(
         response_format=JUDGE_RESPONSE_FORMAT,
     )
     result = await agent.ainvoke({"messages": [HumanMessage(build_prompt(case, pack))]})
+    if usage_sink is not None:
+        _report_usage(result, usage_sink)
     verdict: JudgeVerdict = result["structured_response"]
     return _enforce_abstention(verdict, case)
+
+
+def _report_usage(
+    result: dict[str, Any], usage_sink: Callable[[dict[str, int]], None]
+) -> None:
+    """Forward the judge's own token usage to `usage_sink`, the same way
+    `middleware.py::LlmSpanMiddleware._record_success` reads it off a
+    production agent's response -- the judge binds none of that middleware
+    stack, so this is the one place its usage is ever read."""
+    messages = result.get("messages", [])
+    message = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
+    if message is None:
+        return
+    usage = message.usage_metadata
+    if usage:
+        usage_sink(
+            {
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+            }
+        )

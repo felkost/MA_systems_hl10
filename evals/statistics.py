@@ -174,6 +174,65 @@ def bootstrap_kappa_ci(
     return float(low), float(high)
 
 
+def across_pass_interval(
+    per_pass_values: Sequence[float],
+    *,
+    confidence_level: float = 0.95,
+    n_resamples: int = 9999,
+    random_state: int = 0,
+) -> tuple[float, float]:
+    """Percentile bootstrap confidence interval over repeated-measurement
+    values -- one point estimate per judge pass, not per case (spec Sec13.9
+    amendment, decision D3/D7: F10's judge run-to-run variance).
+
+    This resamples *passes*, never cases -- `bootstrap_proportion_ci` and
+    `bootstrap_kappa_ci` already answer "how much would this figure move if
+    different cases had been drawn"; this answers the orthogonal question
+    "how much would this figure move if the judge were asked again", and the
+    two must never be merged into one interval or the finding that motivated
+    this function -- kappa collapsing 1.0 to 0.0 on byte-identical evidence
+    across two scoring passes -- would be invisible in the report.
+
+    Parameters
+    ----------
+    per_pass_values : sequence of float
+        One already-computed value per pass (e.g. a pass rate or a kappa),
+        typically as few as 3 -- resampling a handful of points is still the
+        correct percentile-bootstrap machinery, just with a wide interval;
+        a wide interval here is the honest report, not a bug to hide.
+
+    Returns
+    -------
+    (low, high) : tuple of float
+        A degenerate input (every pass landed on the same value) returns the
+        point value twice -- no measured judge variance, not `NaN`.
+
+    Raises
+    ------
+    ValueError
+        `per_pass_values` is empty.
+    """
+    if not per_pass_values:
+        raise ValueError("cannot compute a confidence interval over an empty sequence")
+
+    values = np.asarray(list(per_pass_values), dtype=float)
+    if bool(np.all(values == values[0])):
+        point = float(values[0])
+        return point, point
+
+    rng = np.random.default_rng(random_state)
+    n = len(values)
+    resampled_means = np.empty(n_resamples)
+    for i in range(n_resamples):
+        draw = rng.integers(0, n, size=n)
+        resampled_means[i] = values[draw].mean()
+
+    lower_pct = (1 - confidence_level) / 2 * 100
+    upper_pct = (1 + confidence_level) / 2 * 100
+    low, high = np.percentile(resampled_means, [lower_pct, upper_pct])
+    return float(low), float(high)
+
+
 def discriminates(verdicts: Sequence[str | None]) -> bool:
     """Whether `verdicts` shows any spread at all (spec Sec13.7: evaluator
     discriminating power; decision D6's saturation check).
