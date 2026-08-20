@@ -319,7 +319,9 @@ def main() -> None:
     observability.configure_logging("search_mcp")
     observability.configure_observability(settings, "search_mcp")
     mcp.auth = build_token_verifier(settings)
-    mcp.add_middleware(observability.mcp_tool_span_middleware())
+    mcp.add_middleware(
+        observability.mcp_tool_span_middleware(settings.max_span_payload_length)
+    )
     mcp.run(
         transport="http",
         host="127.0.0.1",

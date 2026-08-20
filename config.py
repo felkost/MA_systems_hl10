@@ -17,6 +17,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Provider = Literal["openai", "openrouter"]
 
+# Stage 10a (decision D4): the fallback a blank `MAX_SPAN_PAYLOAD_LENGTH=`
+# resolves to. Untrusted content (a `read_url` result) can reach a tool
+# span, so a misconfigured-blank value must still truncate, never disable
+# the limit -- the opposite of `max_read_url_per_search`'s blank-means-None.
+_DEFAULT_MAX_SPAN_PAYLOAD_LENGTH = 2000
+
 _BLANK_MEANS_UNSET_FIELDS = (
     "supervisor_provider",
     "supervisor_model_name",
@@ -143,6 +149,15 @@ class Settings(BaseSettings):
     # of tracing_enabled, so the smoke test needs no Langfuse keys.
     span_dump_dir: str | None = None
 
+    # -- Evaluation (stage 10a, decision D4): `mcp.tool.*` spans truncate
+    # their `input`/`output` attributes to this length, with an explicit
+    # ellipsis marker so a clipped payload can never be mistaken for a
+    # complete one -- what makes `evals/evidence.py`'s pack carry actual
+    # evidence instead of bare span structure.
+    max_span_payload_length: int = Field(
+        default=_DEFAULT_MAX_SPAN_PAYLOAD_LENGTH, ge=100, le=20_000
+    )
+
     # -- Provider selection (spec Sec 16)
     llm_provider: Provider = "openai"
     model_name: str = "gpt-4.1-mini"
@@ -245,6 +260,18 @@ class Settings(BaseSettings):
         `Literal` parsing and fail with a message that does not say why.
         """
         return None if value == "" else value
+
+    @field_validator("max_span_payload_length", mode="before")
+    @classmethod
+    def _blank_payload_length_uses_the_default(cls, value: object) -> object:
+        """A present-but-empty `MAX_SPAN_PAYLOAD_LENGTH=` line resolves to
+        the default length, not `None` and not a `ValidationError` from
+        trying to parse `""` as an int -- the same "a field whose validation
+        list is opt-in silently drops anything added later" lesson
+        `mcp_a2a_shared_token` already paid for, applied to a plain `int`
+        field where blank cannot mean "unset" (there is no `None` truncation
+        state; blank must still bound untrusted content)."""
+        return _DEFAULT_MAX_SPAN_PAYLOAD_LENGTH if value == "" else value
 
     @model_validator(mode="after")
     def _provider_model_pairs_are_coherent(self) -> Settings:

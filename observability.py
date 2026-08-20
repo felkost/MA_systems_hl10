@@ -9,6 +9,7 @@ unbuffered tail. A file handler flushes per line and survives it.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Sequence
@@ -36,6 +37,15 @@ import paths
 from config import Settings
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s [trace=%(trace_id)s] %(message)s"
+
+# Stamped on every process's `Resource` (`_build_tracer_provider`) and read
+# back by `_should_export_span` (D2, stage 10a) -- one constant so the two
+# never drift independently.
+_SERVICE_NAMESPACE = "ma-systems-hl10"
+
+# D4 (stage 10a): appended to a payload truncated by `_truncate_payload` so
+# a clipped value can never be mistaken for a complete one.
+TRUNCATION_MARKER = "...[truncated]"
 
 # Span names are module constants so tests and production cannot drift
 # (plan D4/D5). `mcp.tool.*` is parameterized by tool name, hence the
@@ -295,7 +305,7 @@ def _build_tracer_provider(
     (batching) processor separately, in `_attach_langfuse`.
     """
     resource = Resource.create(
-        {"service.name": service_name, "service.namespace": "ma-systems-hl10"}
+        {"service.name": service_name, "service.namespace": _SERVICE_NAMESPACE}
     )
     sampler = (
         ALWAYS_ON
@@ -324,7 +334,40 @@ def _attach_langfuse(settings: Settings, provider: TracerProvider) -> Any:
         host=settings.langfuse_host,
         tracer_provider=provider,
         environment="dev",
+        should_export_span=_should_export_span,
     )
+
+
+def _should_export_span(span: ReadableSpan) -> bool:
+    """D2 (stage 10a): admit this project's own spans to Langfuse's
+    publication filter.
+
+    Langfuse's default (`is_default_export_span`) admits only its own SDK
+    spans, spans carrying a `gen_ai.*` attribute, and a fixed list of known
+    LLM-instrumentation scopes -- none of which cover `repl.question`,
+    `agent.*`, `mcp.tool.*` or `llm.*`, which is the whole of stage 9's
+    measured publication gap (27 of 75 observations orphaned). Keyed on the
+    `service.namespace` resource attribute every process here already
+    stamps (`_build_tracer_provider`), not on tracer/scope name, so it
+    survives regardless of which `__name__` a call site's
+    `trace.get_tracer(__name__)` happens to use.
+
+    Never raises: `LangfuseSpanProcessor.on_end` silently drops any span
+    whose predicate throws (measured against the installed 4.14.4), so an
+    exception here would be silent data loss rather than a visible bug --
+    a malformed or unexpected span is therefore excluded, not fatal.
+    """
+    try:
+        from langfuse import is_default_export_span
+
+        if is_default_export_span(span):
+            return True
+        resource = span.resource
+        if resource is None:
+            return False
+        return resource.attributes.get("service.namespace") == _SERVICE_NAMESPACE
+    except Exception:
+        return False
 
 
 def get_tracer(service: str) -> trace.Tracer:
@@ -438,15 +481,57 @@ def _tool_call_outcome(result: Any) -> str:
     return "ok"
 
 
-def mcp_tool_span_middleware() -> Any:
+def _truncate_payload(value: str, max_length: int) -> str:
+    """Clip `value` to `max_length`, appending `TRUNCATION_MARKER` so a
+    truncated payload can never be mistaken for a complete one (D4, stage
+    10a) -- an `evals/evidence.py` pack built from a silently clipped
+    payload would fail a case for missing evidence the agent actually saw.
+    """
+    if len(value) <= max_length:
+        return value
+    return value[:max_length] + TRUNCATION_MARKER
+
+
+def _serialize_tool_input(arguments: dict[str, Any] | None) -> str:
+    """The tool call's arguments as one JSON string, or `"{}"` for a
+    no-argument call -- `default=str` so an unexpected non-JSON value (a
+    `Path`, say) degrades to its string form instead of raising."""
+    if not arguments:
+        return "{}"
+    try:
+        return json.dumps(arguments, default=str, ensure_ascii=False)
+    except TypeError:
+        return str(arguments)
+
+
+def _serialize_tool_output(result: Any) -> str:
+    """The concatenated text of every content block in a `CallToolResult`
+    -- the same `result.content[*].text` shape `_tool_call_outcome` already
+    reads, joined rather than inspected one block at a time."""
+    blocks = getattr(result, "content", None) or []
+    texts = [getattr(block, "text", None) for block in blocks]
+    return "\n".join(text for text in texts if isinstance(text, str))
+
+
+def mcp_tool_span_middleware(max_payload_length: int) -> Any:
     """Build the FastMCP server middleware that emits one
     `mcp.tool.<name>` span per tool call, carrying an `outcome` (`ok` vs
-    `error`) and a `duration_ms` attribute (D5, the stage's tool-telemetry
-    amendment).
+    `error`), a `duration_ms` attribute (D5, stage 9's tool-telemetry
+    amendment), and truncated `input`/`output` payload attributes (D4,
+    stage 10a) -- what makes `evals/evidence.py`'s pack carry the evidence
+    the agent actually saw, not bare span structure.
 
     `fastmcp` is imported inside this function, not at module scope:
     `main.py` (the REPL) imports `observability` and must not pay FastMCP's
     import cost for a module it never serves.
+
+    Parameters
+    ----------
+    max_payload_length : int
+        `Settings.max_span_payload_length` -- each server's `main()` holds
+        `Settings` at the point it attaches this middleware, so the limit
+        is threaded through as a plain argument rather than read from
+        module state (no MCP server holds module-level mutable state).
 
     Returns
     -------
@@ -465,15 +550,32 @@ def mcp_tool_span_middleware() -> Any:
                 context=_parent_context_for_tool_call(),
             ) as span:
                 span.set_attribute("mcp.tool.name", name)
+                span.set_attribute(
+                    "mcp.tool.input",
+                    _truncate_payload(
+                        _serialize_tool_input(context.message.arguments),
+                        max_payload_length,
+                    ),
+                )
                 try:
                     result = await call_next(context)
                 except Exception as error:
+                    span.set_attribute(
+                        "mcp.tool.output",
+                        _truncate_payload(str(error), max_payload_length),
+                    )
                     span.set_attribute("mcp.tool.outcome", "error")
                     span.set_attribute(
                         "mcp.tool.duration_ms", (time.perf_counter() - started) * 1000
                     )
                     span.set_status(Status(StatusCode.ERROR, type(error).__name__))
                     raise
+                span.set_attribute(
+                    "mcp.tool.output",
+                    _truncate_payload(
+                        _serialize_tool_output(result), max_payload_length
+                    ),
+                )
                 span.set_attribute("mcp.tool.outcome", _tool_call_outcome(result))
                 span.set_attribute(
                     "mcp.tool.duration_ms", (time.perf_counter() - started) * 1000

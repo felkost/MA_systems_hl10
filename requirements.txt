@@ -39,3 +39,15 @@ pypdf==6.16.1
 httpx==0.28.1
 trafilatura==2.2.0
 ddgs==9.14.4
+
+# Evaluation (evals/golden/*.yaml, spec Sec13) -- present transitively via
+# chromadb before this pin; named explicitly so the format the spec mandates
+# does not depend on somebody else's dependency graph.
+pyyaml==6.0.3
+
+# Evaluation statistics (evals/statistics.py, stage 10b, decision D7) --
+# both already present transitively via sentence-transformers and were
+# unpinned, the same shape as the pyyaml finding above; the numbers a report
+# cites must not depend on somebody else's dependency graph.
+scipy==1.18.0
+scikit-learn==1.9.0

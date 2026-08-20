@@ -33,12 +33,16 @@ from config import Settings
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# The two roles whose agent builds ProviderStrategy(..., strict=True)
-# (agents/planner.py:53, agents/critic.py:44, both unconditional module-level
-# constants) -- hardcoded rather than introspected from agents/*.py, since
-# this module sits below agents/ in the layer table and must not import
-# upward.
-_STRUCTURED_OUTPUT_ROLES = ("planner", "critic")
+# The roles whose caller builds a strict structured-output request:
+# "planner"/"critic" via ProviderStrategy(..., strict=True)
+# (agents/planner.py:53, agents/critic.py:44, both unconditional
+# module-level constants) -- hardcoded rather than introspected from
+# agents/*.py, since this module sits below agents/ in the layer table and
+# must not import upward. "judge" (stage 10a, decision D1) joins the same
+# way: evals/judge.py builds its own strict structured request, and without
+# this the preflight refusal a misconfigured OpenRouter judge model needs
+# would happen mid-dataset-run instead of at startup.
+_STRUCTURED_OUTPUT_ROLES = ("planner", "critic", "judge")
 
 
 def resolve_model(settings: Settings, role: str) -> tuple[str, str]:
@@ -144,8 +148,8 @@ async def assert_structured_output_supported(settings: Settings, role: str) -> N
     """Refuse if `role` cannot actually get the structured output its agent
     requires from the model it resolves to (spec Sec16 preflight).
 
-    No-op outside `{"planner", "critic"}` -- the only roles whose agent
-    builds `ProviderStrategy(..., strict=True)`. No-op for provider
+    No-op outside `{"planner", "critic", "judge"}` -- the only roles whose
+    caller builds a strict structured-output request. No-op for provider
     `"openai"`: strict JSON-schema mode is a stable capability of every
     OpenAI model family this project resolves to, with no public per-model
     capability listing the way OpenRouter's is. For provider `"openrouter"`,

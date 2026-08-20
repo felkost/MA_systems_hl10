@@ -171,6 +171,18 @@ OPENAI_API_KEY=sk-...
 OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
+**The `JUDGE` role is not optional configuration once `evals/` is used.**
+`evals/judge.py`'s LLM judge grades a run's evidence against the golden
+dataset, and it must come from a different model family than the agents it
+grades — an unset `JUDGE_PROVIDER`/`JUDGE_MODEL_NAME` falls back to
+`LLM_PROVIDER`/`MODEL_NAME`, the exact self-preference bias this is meant to
+avoid:
+
+```ini
+JUDGE_PROVIDER=openrouter
+JUDGE_MODEL_NAME=anthropic/claude-sonnet-4.5
+```
+
 Two rules are checked when the configuration is loaded — offline, in every
 process, before any request is sent:
 
@@ -220,6 +232,46 @@ docker compose up -d                 # Langfuse, Postgres, ClickHouse, Redis, Mi
 With tracing on, one REPL question produces one trace spanning the REPL,
 both MCP servers and all three A2A agents, visible at `http://localhost:3000`.
 
+## Evaluation: running a sweep and scoring it
+
+Running the golden dataset against the real stack and judging the result are
+two separate commands (stage 10b, decision D1) — a live sweep is expensive,
+a rubric revision is not, so they are never paid for together:
+
+```bash
+python -m evals.run_eval --repeat 3 --run-dir runs/sweep-01
+```
+
+Boots the five servers once, drives every case in `evals/golden/*.yaml`
+`--repeat` times over (default 1), and persists one `EvidencePack` per
+`(run, case)` pair to `runs/sweep-01/packs/`, plus `results.jsonl` and
+`run_metadata.json` (provider map, dataset digest, git revision). `--cases
+<id1>,<id2>` runs a subset; `--judge` runs the judge inline instead of
+leaving it for the step below (mainly for a quick one-off check); `--repeat`
+and `--judge` both default to the cheap choice.
+
+```bash
+python -m evals.score --run-set runs/sweep-01
+```
+
+Reads every persisted pack, judges each against `evals/judge.py`'s currently
+active rubric, and writes `scores-<version>.jsonl` (one verdict per case) and
+`summary-<version>.json` (per-item pass rate with a bootstrap confidence
+interval, discriminating-power flag, and — when `evals/labels/
+human_labels.yaml` names this same run — Cohen's kappa against the human
+labels, also with an interval). No servers boot; the judge model is the only
+thing reached, so re-scoring the same sweep under a revised rubric costs one
+judge call per case, not another live run.
+
+**Read a single scoring pass with care.** Stage 10b scored the identical
+packs twice and the two passes disagreed by up to 20 percentage points on one
+rubric item, with another item's kappa moving from 1.0 to 0.0 — the judge is
+a sampling model, and its run-to-run variance can exceed the effect being
+measured. The bootstrap interval in `summary-<version>.json` covers
+resampling of the **cases**, not of the **judge**. Until `score.py` gains a
+repeat argument (recorded as F10 in `evals/analysis/fixes-pending.md`), run
+it more than once before quoting any figure as a result.
+
 ## Cleanup
 
 Stop the REPL and the servers with `Ctrl+C` — `servers.py` shuts all five
@@ -254,7 +306,8 @@ the index is built from) and `output/` (reports you approved).
 - [x] Stage 7 — HITL on `save_report` + crash-safe checkpoint (`AsyncSqliteSaver`, `--thread` resume)
 - [x] Stage 8 — launcher (`servers.py`), startup preflight, shared bearer token on all five servers
 - [x] Stage 9 — Langfuse + OpenTelemetry: one question, one trace
-- [ ] Stage 10 — evaluation: golden dataset, LLM judge, statistics
+- [x] Stage 10a — evaluation tooling: golden dataset, judge, auto-approve HITL harness, dataset runner
+- [x] Stage 10b — real runs, error analysis, statistics (36-trace sweep, nine-category taxonomy, rubric v1 -> v2 derived from it, five-item scores with bootstrap CIs; two items reported **unvalidated** by the stage's own kappa threshold, six system defects recorded and deliberately unfixed)
 - [ ] Stage 11 — final report (EN/UA)
 
 ## Documentation

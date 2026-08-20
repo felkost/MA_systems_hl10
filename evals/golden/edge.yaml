@@ -1,0 +1,48 @@
+# Golden dataset -- edge slice (spec Sec13): hard cases -- out-of-scope,
+# under-specified, and revision-budget-exhausting. See evals/golden/core.yaml
+# for the shared header notes.
+
+- id: edge-out-of-scope-recipe
+  question: "What's a good recipe for Ukrainian borscht?"
+  rationale: >-
+    Entirely outside the corpus and outside this system's research-
+    assistant purpose -- checks whether the system recognises and states
+    that, rather than fabricating a plan around a request there is nothing
+    to research. Same shape as hl8's own out-of-scope row.
+  expects:
+    out_of_scope: true
+
+- id: edge-underspecified-tell-me-about-agents
+  question: "Tell me about AI agents."
+  rationale: >-
+    Too vague to decompose without the Planner doing real work -- there is
+    no single "correct" scope, so this case is read for whether the
+    Planner narrows the request sensibly, not against a fixed expected
+    answer.
+
+- id: edge-narrow-memory-question
+  question: >-
+    Does the ingested survey's discussion of agent memory components
+    differ between single-agent and multi-agent architectures? If so, how?
+  rationale: >-
+    A precise, compound corpus question (two connected sub-claims in one
+    ask) -- tests whether the system answers both parts or silently drops
+    one, the same failure mode
+    RESEARCH_INPUT_TEMPLATE/CRITIQUE_INPUT_TEMPLATE exist to prevent at the
+    coordination layer.
+  expects:
+    must_cite: true
+
+- id: edge-exhaustive-cross-reference-request
+  question: >-
+    In extensive detail spanning at least ten distinct sub-questions,
+    exhaustively analyze every architectural pattern, agent persona
+    design, and planning phase discussed in the ingested survey,
+    cross-referencing each with the most recent 2026 industry
+    developments you can find.
+  rationale: >-
+    Deliberately broad and demanding -- exercises the Critic's REVISE loop
+    and the Supervisor's revision-budget exhaustion path
+    (ToolCallLimitMiddleware's run_limit, stage 6's own measured scenario),
+    without a forced expected verdict since the number of revision rounds
+    a live model actually takes is not deterministic.
