@@ -112,8 +112,9 @@ python main.py                       # the REPL, in a second terminal
 ```
 
 Or start each server yourself, as the assignment prescribes — one terminal
-each, **the two MCP servers first**: each A2A agent checks SearchMCP at
-startup and refuses to serve if it cannot reach it.
+each, **the two MCP servers first**: every A2A agent preflights SearchMCP at
+startup and refuses to serve if it cannot reach it, and the REPL preflights
+both MCP servers before it accepts a question.
 
 ```bash
 python mcp_servers/search_mcp.py     # port 8901
@@ -126,6 +127,12 @@ python main.py
 
 All five servers verify the same `MCP_A2A_SHARED_TOKEN` from `.env` and
 refuse to start without one, whichever way you launch them.
+
+One measured constraint worth knowing before you plan a session: on an 8 GB
+machine the self-hosted Langfuse stack and the five Python servers do not fit
+at the same time — the reranking cross-encoder alone loads about 1.1 GB. The
+36-trace evaluation sweep was run with the containers down for exactly this
+reason, and tracing to a file (`SPAN_DUMP_DIR`) needs no containers at all.
 
 ## Configuration: providers and models
 
@@ -180,7 +187,7 @@ avoid:
 
 ```ini
 JUDGE_PROVIDER=openrouter
-JUDGE_MODEL_NAME=anthropic/claude-sonnet-4.5
+JUDGE_MODEL_NAME=google/gemini-2.5-pro
 ```
 
 Two rules are checked when the configuration is loaded — offline, in every
@@ -203,10 +210,33 @@ EMBEDDING_MODEL=BAAI/bge-m3         # a Hugging Face id when local
 ```
 
 With `local` embeddings and OpenRouter chat, no OpenAI key is needed anywhere.
-`index/manifest.json` records the embedding provider, model and dimensions that
-built the index; an index built under a different fingerprint is refused rather
+`index/manifest.json` records the embedding provider, model and — when the
+provider was asked for one — the dimension count that built the index
+(`null` means the model's own default was used); an index built under a
+different fingerprint is refused rather
 than answering from vectors of another embedding space — rebuild it with
 `python ingest.py`.
+
+### The configuration every published number was measured under
+
+The formula above allows many configurations; the project was run in one of
+them, and every figure the evaluation stages report comes from it. The four
+chat roles and the judge are recorded per run in the run set's own metadata,
+resolved at run time rather than reconstructed afterwards; the embeddings row
+comes from the index manifest that run read:
+
+| Role | Provider | Model |
+|:---|:---|:---|
+| Supervisor, Planner, Researcher, Critic | `openai` | `gpt-4.1-mini` |
+| Judge | `openrouter` | `google/gemini-2.5-pro` |
+| Embeddings | `openai` | `text-embedding-3-small` |
+
+Four agents on one model is a deliberate baseline, not a shortcut: the
+protocol split is what this project measures, and giving each agent a
+different model would mix that effect with a model-choice effect. The judge
+sits in a different family from every agent it grades, per the rule above —
+and stage 10b measured that even so, its own run-to-run variance on identical
+evidence is larger than several of the effects it was asked to detect.
 
 ## Configuration: observability
 
@@ -269,8 +299,8 @@ rubric item, with another item's kappa moving from 1.0 to 0.0 — the judge is
 a sampling model, and its run-to-run variance can exceed the effect being
 measured. The bootstrap interval in `summary-<version>.json` covers
 resampling of the **cases**, not of the **judge**. Until `score.py` gains a
-repeat argument (recorded as F10 in `evals/analysis/fixes-pending.md`), run
-it more than once before quoting any figure as a result.
+repeat argument — stage 10c's work — run it more than once before quoting any
+figure as a result.
 
 ## Cleanup
 
@@ -292,7 +322,9 @@ rm -rf .venv/                        # the environment itself
 
 Everything above is rebuildable from the repository — nothing there is a
 source of truth. The two directories to leave alone are `data/` (the documents
-the index is built from) and `output/` (reports you approved).
+the index is built from) and `output/` (reports you approved). `output/` is
+tracked, so your own approved reports land beside the samples that ship with
+the repository; deleting one is a tracked change like any other.
 
 ## Progress
 
@@ -307,7 +339,9 @@ the index is built from) and `output/` (reports you approved).
 - [x] Stage 8 — launcher (`servers.py`), startup preflight, shared bearer token on all five servers
 - [x] Stage 9 — Langfuse + OpenTelemetry: one question, one trace
 - [x] Stage 10a — evaluation tooling: golden dataset, judge, auto-approve HITL harness, dataset runner
-- [x] Stage 10b — real runs, error analysis, statistics (36-trace sweep, nine-category taxonomy, rubric v1 -> v2 derived from it, five-item scores with bootstrap CIs; two items reported **unvalidated** by the stage's own kappa threshold, six system defects recorded and deliberately unfixed)
+- [x] Stage 10b — real runs, error analysis, statistics (36-trace sweep, nine-category taxonomy, rubric v1 -> v2 derived from it, five-item scores with bootstrap CIs; **three of five items reported unvalidated** once both scoring passes count, six system defects recorded and deliberately unfixed)
+- [ ] Stage 10c — judge run-to-run variance (n >= 3 scoring) and independent human labels
+- [ ] Stage 10d — narrow hardening: the two most serious defects the sweep found, re-measured
 - [ ] Stage 11 — final report (EN/UA)
 
 ## Documentation
@@ -316,3 +350,9 @@ The full report — architecture, tested scenarios, measured numbers with
 confidence intervals, and the cost of the protocol split against the hl8
 baseline — ships at stage 11 as `report/report_en.md` and
 `report/report_ua.md`.
+
+`output/` carries what the system itself wrote: real reports from real REPL
+sessions, unedited, each one the artefact of a full Plan → Research →
+Critique → approve cycle. They are samples of the system's actual output
+quality, not curated examples — including its citation habits, which the
+evaluation stages measure rather than assume.

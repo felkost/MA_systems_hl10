@@ -49,23 +49,39 @@ runtime/
 # rule above -- found live, while staging this stage's own commit.
 !evals/fixtures/*.md
 
-# The stage-10b failure taxonomy (spec Sec5.3/D9) is the same kind of
-# public, tracked evaluation artefact -- the open-coding notes and the
-# taxonomy they consolidate into ship alongside the golden dataset itself.
-!evals/analysis/*.md
-!evals/analysis/notes/*.md
+# evals/analysis/ is local-only -- author's decision, 2026-08-20, reversing
+# the visibility half of D9. The taxonomy, the 17 open-coding notes and
+# fixes-pending.md are working prose of the same class as docs/, and the
+# repository tracks artefacts a reader runs, not the reasoning behind them.
+# D9's other half stands: the taxonomy still carries per-category counts and
+# trace ids. What is lost is stated rather than glossed -- an outside reader
+# can no longer check the coding, only the numbers derived from it.
+evals/analysis/
 
-# output/ holds generated reports. Ignore its contents, then re-include the
-# reports and the placeholder: a stray file from a crashed run must not be
-# picked up by a broad `git add`. Ignoring `output/` itself would make these
-# negations unreachable.
+# output/ holds generated reports, and they are a tracked, public deliverable:
+# the reports are what this system produces, so a reader of the repository sees
+# real ones rather than a placeholder. Ignore the directory's contents, then
+# re-include the reports and the placeholder -- a stray file from a crashed run
+# must not be picked up by a broad `git add`, and ignoring `output/` itself
+# would make these negations unreachable.
+#
+# The negation is deliberately blanket, so the guard cannot live in whatever
+# the committer remembers: `tests/test_output_reports_are_publishable.py`
+# refuses any report carrying a system-prompt paragraph or the injection
+# payload. Both are real, unfixed system defects (10b's F3 and F6), and a
+# leaked report reaching GitHub is undoable by anything short of a history
+# rewrite.
 output/*
 !output/.gitkeep
 !output/*.md
 
 # Stage-10b sweep artefacts (span dumps, packs, checkpoints, results) --
-# per-run-set, rebuilt by `python -m evals.run_eval`, never committed. The
-# tracked outputs of a sweep are `evals/labels/human_labels.yaml` and
-# `evals/analysis/` above, written by hand from reading a run, not the run
-# directory itself.
+# per-run-set, rebuilt by `python -m evals.run_eval`, never committed. The one
+# tracked output of a sweep is `evals/labels/human_labels.yaml`, written by
+# hand from reading a run, not the run directory itself.
+#
+# This rule is load-bearing, not housekeeping: a sweep repoints OUTPUT_DIR at
+# `runs/<set>/output/`, which is where the two reports carrying a leaked
+# prompt and a successful injection actually landed. They stayed local by way
+# of this line, not by way of anything the system itself decided.
 runs/
