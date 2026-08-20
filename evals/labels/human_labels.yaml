@@ -3,8 +3,8 @@
 # ⚠ PROVENANCE — READ BEFORE CITING THESE NUMBERS ANYWHERE ⚠
 #
 # The verdicts below were DRAFTED BY THE ASSISTANT from the open-coding
-# pass (`evals/analysis/notes/`, `taxonomy.md`), then reviewed by the
-# author. They are NOT independently produced human labels.
+# pass over the 36 traces, then reviewed by the author. They are NOT
+# independently produced human labels.
 #
 # Why this matters: Cohen's kappa between these and the judge measures
 # agreement between two LLM-derived readings of the same traces, with a
