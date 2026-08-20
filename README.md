@@ -351,7 +351,7 @@ the repository; deleting one is a tracked change like any other.
 - [x] Stage 10a — evaluation tooling: golden dataset, judge, auto-approve HITL harness, dataset runner
 - [x] Stage 10b — real runs, error analysis, statistics (36-trace sweep, nine-category taxonomy, rubric v1 -> v2 derived from it, five-item scores with bootstrap CIs; **three of five items reported unvalidated** once both scoring passes count, six system defects recorded and deliberately unfixed)
 - [x] Stage 10c — judge run-to-run variance (n >= 3 scoring, `--passes N`) and independent human labels (24 traces, spec Sec13.6 partly closed: `citation_reliability` now validated). F10 confirms stage 10b's finding at the same order of magnitude (20 pp spread across three complete, evenly-distributed passes) rather than shrinking it
-- [ ] Stage 10d — narrow hardening: the two most serious defects the sweep found, re-measured
+- [x] Stage 10d — narrow hardening: F6 (`knowledge_search` untrusted-content wrapping) and F2 (out-of-scope refusal gate). F6 measured 1/3 -> 2/3 resistance, not parity with `read_url`'s 3/3 -- reported as a partial fix. F2 needed a schema fix (a Python-default field is excluded from OpenAI's strict-mode `required`, so the model wasn't reliably asked for it), not the prompt tightening tried first; measured 3/3 clean refusals and 0/5 over-refusals afterward
 - [ ] Stage 11 — final report (EN/UA)
 
 ## Documentation
