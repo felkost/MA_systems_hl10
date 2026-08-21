@@ -14,7 +14,7 @@ that flag -- every operational and policy refusal already returns a plain
 and session failures raise regardless of this flag. So this module's real
 job is the allowlist plus this documented, pinned default -- passing `False`
 would only convert this project's `isError`-free results into
-`ToolException`s, for no gain (insights.md 2026-08-16).
+`ToolException`s, for no gain (measured 2026-08-16).
 """
 
 from __future__ import annotations

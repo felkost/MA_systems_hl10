@@ -31,7 +31,7 @@ from fastmcp import FastMCP
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
-    # `python mcp_servers/report_mcp.py` (the invocation docs/task-hl10.md
+    # `python mcp_servers/report_mcp.py` (the invocation the assignment
     # prescribes) puts this file's own directory on sys.path[0], not the
     # project root -- same fix search_mcp.py already carries, and the same
     # reason: the project-local imports below would not resolve otherwise.
@@ -44,7 +44,7 @@ from config import load_settings  # noqa: E402
 
 # First character must not be a dot: a naive [A-Za-z0-9._-]{1,120} class
 # admits ".", "..", "..." and ".md" outright, since every character in each
-# of them is individually allowed (insights.md, 2026-08-16). Because "/",
+# of them is individually allowed (measured 2026-08-16). Because "/",
 # "\" and ":" are all outside this class, any string that matches is always
 # exactly one path component -- traversal is not spellable at all, not
 # merely blocked incidentally.
@@ -69,12 +69,12 @@ class ReportPathError(Exception):
 def _resolve_inside_output(filename: str, output_root: Path) -> Path:
     """Confine `filename` to `output_root`, appending `.md` if it is bare.
 
-    Two independent layers -- see insights.md 2026-08-16 for the corrected
-    account of which case each one actually catches. Layer 1 (the character
-    allowlist) closes every *spellable* traversal shape, because none of
-    them can be written without a forbidden character. Layer 2 (resolve
-    then compare parents) is what catches a symlink: a name that clears
-    layer 1 outright but resolves, once followed, outside `output_root`.
+    Two independent layers (which case each one actually catches was
+    corrected 2026-08-16). Layer 1 (the character allowlist) closes every
+    *spellable* traversal shape, because none of them can be written without
+    a forbidden character. Layer 2 (resolve then compare parents) is what
+    catches a symlink: a name that clears layer 1 outright but resolves,
+    once followed, outside `output_root`.
 
     Raises
     ------
@@ -106,8 +106,8 @@ def _resolve_inside_output(filename: str, output_root: Path) -> Path:
     resolved = (output_root / candidate.name).resolve()
     # os.path.normcase, not a bare `==`: on Windows, "F:/X/OUTPUT" ==
     # "F:/X/output" is False even though the two name one directory
-    # (measured, insights.md 2026-08-16) -- a raw comparison here would
-    # refuse legitimate writes whenever case differs.
+    # (measured 2026-08-16) -- a raw comparison here would refuse
+    # legitimate writes whenever case differs.
     if os.path.normcase(str(resolved.parent)) != os.path.normcase(
         str(output_root.resolve())
     ):

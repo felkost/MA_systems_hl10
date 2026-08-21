@@ -1,8 +1,8 @@
 """Upload the golden dataset to Langfuse (spec Sec13, decisions D6/D7):
 `create_dataset` then `create_dataset_item` per case, upserted by the case's
 own stable id -- idempotent re-upload after editing a slice, the one place
-this improves on hl8's own additive uploader (`upload_dataset.py:1-13`,
-which required clearing the dataset by hand before a second run).
+this improves on an earlier iteration's own additive uploader (which
+required clearing the dataset by hand before a second run).
 
 The tracked `evals/golden/*.yaml` files are the source of truth; this
 dataset is a projection (spec Sec13's own words for the relationship, "the
@@ -41,8 +41,8 @@ class DatasetUploadError(Exception):
 
 class DatasetClient(Protocol):
     """The subset of the Langfuse client's surface this module needs --
-    narrow enough to fake offline, the same `Protocol` shape hl8's own
-    `upload_dataset.py` used for its LangSmith client."""
+    narrow enough to fake offline, the same `Protocol` shape an earlier
+    iteration's own uploader used for its LangSmith client."""
 
     def create_dataset(self, *, name: str, description: str | None = None) -> Any: ...
 
@@ -64,9 +64,10 @@ def build_client(settings: Settings) -> DatasetClient:
     explicitly.
 
     Never from `os.environ`: `pydantic-settings` does not populate the
-    process environment from `.env` on its own, and hl8's own uploader
-    failed a real run on exactly this -- a client that reads its key from
-    `os.environ` raised an auth error even though `.env` held a valid one.
+    process environment from `.env` on its own, and an earlier iteration's
+    own uploader failed a real run on exactly this -- a client that reads
+    its key from `os.environ` raised an auth error even though `.env` held
+    a valid one.
     """
     from langfuse import Langfuse
 

@@ -202,7 +202,7 @@ async def _resolve_thread_config(
     Raises
     ------
     PreflightError
-        `thread` names a thread with no checkpoint. hl8's measured trap:
+        `thread` names a thread with no checkpoint. A measured trap:
         resuming an unknown thread must refuse, never silently start a new,
         empty conversation under the id the human typed.
     """

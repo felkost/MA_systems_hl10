@@ -1,13 +1,13 @@
 # Remote gate: the deterministic, dependency-free half of the local gate.
 #
 # pytest and mypy are deliberately absent here, not forgotten:
-# - tests/ is local-only by repository policy (see CLAUDE.md), so the suite
+# - tests/ is local-only by repository policy, so the suite
 #   never reaches GitHub and cannot run in CI;
 # - mypy without the full dependency stack installed reports "no issues"
-#   precisely because it cannot see the libraries (measured in hl8), and
+#   precisely because it cannot see the libraries (measured), and
 #   installing the stack (torch, chromadb) makes CI minutes-slow for no
 #   signal the local gate does not already give.
-# The full gate runs locally before every commit (CONTRIBUTING.md).
+# The full gate runs locally before every commit.
 
 name: gate
 

@@ -2,11 +2,10 @@
 per request), one Agent Card each: Planner :8903, Researcher :8904, Critic
 :8905.
 
-Reference for every A2A shape below: spec Sec5a
-(docs/superpowers/specs/2026-08-14-mcp-a2a-refactor-design-en.md), measured
-against the installed a2a-sdk 1.1.2 at the stage-4 kickoff --
-a2a-python/samples/ ships with neither the installed package nor this
-checkout, so it is not the reference.
+Reference for every A2A shape below: spec Sec5a, measured against the
+installed a2a-sdk 1.1.2 at the stage-4 kickoff -- a2a-python/samples/ ships
+with neither the installed package nor this checkout, so it is not the
+reference.
 
 Stage 5 extends this file with `_SubAgentExecutor`, the base every executor
 shares (get input -> load tools -> build agent -> invoke -> enqueue one
@@ -249,8 +248,8 @@ class CriticExecutor(_SubAgentExecutor):
     via `new_message` from the same helper family `new_text_message` belongs
     to -- not hand-rolled Protobuf. Following the brief's `new_text_message`
     literally here would force the Supervisor to parse a verdict out of
-    prose, the exact failure hl8 measured (4 of 18 runs ended without saving
-    after an APPROVE).
+    prose, the exact failure measured previously (4 of 18 runs ended without
+    saving after an APPROVE).
     """
 
     allowlist = CRITIC_ALLOWLIST

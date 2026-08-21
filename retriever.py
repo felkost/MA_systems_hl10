@@ -106,7 +106,7 @@ def configure_model_cache(settings: Settings) -> Path:
     -----
     The variables are overwritten, not set as defaults: an `HF_HOME` left by
     another project would otherwise decide where a large model is
-    downloaded -- the CLAUDE.md drive-F rule this exists to hold.
+    downloaded -- the project policy this exists to hold.
 
     `HF_HOME` alone is not enough, which is why `_cross_encoder` also passes
     `cache_folder`: `huggingface_hub` computes its cache location once, when

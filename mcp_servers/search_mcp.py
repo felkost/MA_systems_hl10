@@ -41,10 +41,10 @@ from fastmcp import FastMCP
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
-    # `python mcp_servers/search_mcp.py` (the invocation docs/task-hl10.md
+    # `python mcp_servers/search_mcp.py` (the invocation the assignment
     # prescribes) puts this file's own directory on sys.path[0], not the
     # project root, so the project-local imports below would not resolve
-    # otherwise. Same fix tests/conftest.py already applies for pytest.
+    # otherwise. Same fix the test suite already applies for pytest.
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import observability  # noqa: E402
@@ -99,7 +99,7 @@ def _address_is_blocked(
 ) -> bool:
     """True if `address` must not be reached from `read_url`.
 
-    Verified against the installed Python 3.12.10 (insights.md 2026-08-16):
+    Verified against the installed Python 3.12.10 (2026-08-16):
     `ipaddress` already resolves IPv4-mapped IPv6 addresses correctly --
     `::ffff:127.0.0.1` reports `is_loopback=True` and `::ffff:8.8.8.8`
     reports `is_private=False` -- so no manual `.ipv4_mapped` unwrap is

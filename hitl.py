@@ -2,27 +2,25 @@
 decision contract (stage 7).
 
 **D6 -- the assignment's `edit` payload does not match this contract.**
-`docs/task-hl10.md` implies an `edit` decision carries an edited action; the
+The assignment brief implies an `edit` decision carries an edited action; the
 installed `EditDecision` requires `edited_action={"name": ..., "args": ...}`,
 which a human's free-text feedback string is not, and sending it as-is
 raises `KeyError: 'name'` inside `HumanInTheLoopMiddleware._process_decision`.
 `edit` is mapped instead onto a real `reject` decision carrying the
 feedback plus a revision instruction as the message: the tool call does not
 execute, the model receives an error `ToolMessage` with that content and
-revises. Ported from the hl8 donor's own documented deviation
-(`../MA_systems_hl8_project/MA_system_hl8/hitl.py`), re-verified against the
-installed LangChain 1.3.15's real TypedDicts rather than carried forward
-unmeasured.
+revises. Ported from an earlier iteration of this system's own documented
+deviation, re-verified against the installed LangChain 1.3.15's real
+TypedDicts rather than carried forward unmeasured.
 
-**D7 -- narrower than the donor's.** hl8 exported `build_interrupt_request`
-because it had a second, hand-built graph path whose payload had to be
-indistinguishable from the middleware's own. hl10 has exactly one path
-(`HumanInTheLoopMiddleware` on the Supervisor), so that builder is not
-ported.
+**D7 -- narrower than that earlier iteration's.** It exported
+`build_interrupt_request` because it had a second, hand-built graph path
+whose payload had to be indistinguishable from the middleware's own. This
+project has exactly one path (`HumanInTheLoopMiddleware` on the Supervisor),
+so that builder is not ported.
 
-**Layering (pinned by tests/test_layering.py):** application layer --
-imported by `main.py` and by `middleware.SaveReportGuardMiddleware`'s retry
-text, never the reverse.
+**Layering:** application layer -- imported by `main.py` and by
+`middleware.SaveReportGuardMiddleware`'s retry text, never the reverse.
 """
 
 from __future__ import annotations
@@ -132,12 +130,13 @@ def render_save_status(outcomes: Sequence[BaseMessage]) -> str:
 
     Notes
     -----
-    D8: hl8 measured a real session where the model's closing text claimed
-    "I have saved the report" after two human rejections, with nothing on
-    disk. The truth source is the `save_report` `ToolMessage`'s own
-    content -- never an `AIMessage`'s prose -- and `report_mcp.save_report`
-    never raises, so a failed write is recognised by its `ERROR:` prefix,
-    the same convention every tool in this project uses.
+    D8: an earlier iteration of this project measured a real session where
+    the model's closing text claimed "I have saved the report" after two
+    human rejections, with nothing on disk. The truth source is the
+    `save_report` `ToolMessage`'s own content -- never an `AIMessage`'s
+    prose -- and `report_mcp.save_report` never raises, so a failed write
+    is recognised by its `ERROR:` prefix, the same convention every tool in
+    this project uses.
 
     A tool loaded through `langchain-mcp-adapters` (the real
     `save_report_tool`, unlike every offline test's plain-string `@tool`

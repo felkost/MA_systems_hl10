@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     -----
     Fields are matched to their upper-case environment variable by name
     (pydantic-settings' default), so no field here needs an explicit
-    `validation_alias` the way hl8's `api_key` did.
+    `validation_alias` the way an earlier iteration's `api_key` did.
     """
 
     ROLES: ClassVar[tuple[str, ...]] = (
@@ -61,7 +61,7 @@ class Settings(BaseSettings):
         "judge",
     )
 
-    # -- Networking. Bind host is not a field -- CLAUDE.md fixes it to
+    # -- Networking. Bind host is not a field -- fixed by project policy to
     # 127.0.0.1 as a security invariant. Base URLs are a stage-2 concern:
     # FastMCP's real client-connection path is verified against the
     # installed package then, not guessed now.
@@ -88,10 +88,11 @@ class Settings(BaseSettings):
     recursion_limit: int = Field(default=100, ge=2, le=200)
     supervisor_run_timeout_seconds: int = Field(default=1200, ge=60, le=1800)
 
-    # -- Researcher / Critic agent budgets (stage 5): ported from the hl8
-    # donor with the same defaults and bounds. The Planner's own budget (4)
-    # stays a module constant in agents/planner.py -- experiments (stage 11)
-    # vary these two, not that one.
+    # -- Researcher / Critic agent budgets (stage 5): ported from this
+    # project's predecessor implementation with the same defaults and
+    # bounds. The Planner's own budget (4) stays a module constant in
+    # agents/planner.py -- experiments (stage 11) vary these two, not that
+    # one.
     researcher_max_tool_calls: int = Field(default=8, ge=1, le=50)
     critic_max_tool_calls: int = Field(default=5, ge=1, le=50)
     # Pages read_url may open before the next search, enforced by

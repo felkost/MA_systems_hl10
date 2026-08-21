@@ -8,7 +8,8 @@ session-long thread would let the checkpointer skip Planner/Researcher on
 cases after the first (measured at stage 9: 209 s -> 36 s for a follow-up on
 the same thread), silently evaluating a different system from case two
 onward. The whole dataset is loaded and validated before the first case
-runs -- hl8 lost the tokens of every cell preceding a broken one.
+runs -- an earlier iteration of this project lost the tokens of every cell
+preceding a broken one.
 
 This module never touches `supervisor.py`, `hitl.py` or `middleware.py`: the
 auto-approve harness (`evals/harness.py`) substitutes `main._resolve_interrupt`
@@ -62,8 +63,8 @@ _FIXTURE_URL_PLACEHOLDER = "{fixture_url}"
 
 
 class DatasetValidationError(Exception):
-    """Fail before spending (hl8's own lesson): raised before a single case
-    runs, never mid-sweep."""
+    """Fail before spending (an earlier lesson from this project's
+    predecessor): raised before a single case runs, never mid-sweep."""
 
 
 class DatasetLinker(Protocol):
