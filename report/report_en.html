@@ -1,0 +1,275 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+body { font-family: Georgia, serif; max-width: 900px; margin: 2em auto; line-height: 1.5; }
+img { max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 0.85em; }
+td, th { border: 1px solid #999; padding: 4px 8px; }
+</style></head><body>
+<h1>MA_systems_hl10</h1>
+<h2>1. What this system is</h2>
+<p>A terminal multi-agent research system where every hop between components
+uses a network protocol rather than a function call. A user asks a research
+question; four agents — a Supervisor and three sub-agents — plan, research
+and critique an answer in a loop, and nothing reaches disk until the user
+approves it at the terminal.</p>
+<ul>
+<li>MCP (Model Context Protocol) carries every tool call: two servers,
+  SearchMCP (<code>web_search</code>, <code>read_url</code>, <code>knowledge_search</code>) and ReportMCP
+  (<code>save_report</code>), each a long-lived FastMCP process on its own port.</li>
+<li>A2A (Agent2Agent) carries every agent-to-agent delegation: the Planner,
+  Researcher and Critic each run as their own A2A server with their own
+  Agent Card; the Supervisor is the only agent living in the user's
+  terminal process, and reaches the other three exclusively through
+  <code>a2a.client</code>.</li>
+<li>Human-in-the-loop gates the one write the system can make: <code>save_report</code>
+  only executes after an explicit <code>approve</code> at the REPL, enforced by
+  <code>HumanInTheLoopMiddleware</code> and a guard that reads the Critic's verdict
+  from typed graph state, never from prose.</li>
+</ul>
+<p><img alt="Target architecture — five servers plus the terminal Supervisor, MCP tool calls and A2A delegations" src="figures/01-target-architecture.png" /></p>
+<h2>2. The fixed invariant</h2>
+<p><code>supervisor.py</code> never imports <code>a2a_servers</code> or any <code>agents/*</code> module —
+pinned by an automated import-layering test — so a delegation cannot
+quietly become a local function call while the system keeps working. This
+is the architectural bet the whole project makes: real protocol boundaries
+are enforced structurally, not by convention.</p>
+<p>The loop is capped in code (a run limit on the number of repeat calls),
+never left to a prompt's own judgment to terminate. When the loop ends, the
+Supervisor presents the draft for approval, edit or rejection.</p>
+<p><img alt="The main scenario: one question from the REPL to a written file — delegations to the Planner, Researcher and Critic over A2A, the Critic's verdict as typed data, an interrupt for human approval, and only after approve the save_report call to ReportMCP. SearchMCP tool calls are not shown in this diagram" src="figures/02-hitl-approve-sequence.png" /></p>
+<p>The system supports all four human decisions — approve, edit, reject and
+crash recovery. The <code>edit</code> decision is handled as follows: a human's
+free-text feedback cannot be turned into the structured action the library
+expects, so that feedback is instead passed through as a <code>reject</code> carrying
+an instruction to revise. Crash recovery works through
+<code>AsyncSqliteCheckpointer</code> and the <code>--thread</code> flag: given a conversation id
+the system does not know, it refuses rather than quietly starting a new,
+empty conversation.</p>
+<h2>3. Booting and running the stack</h2>
+<p>Both MCP servers must be reachable before any A2A agent will serve requests
+— each A2A server preflights SearchMCP at startup and refuses to serve if
+it cannot reach it — so the launcher boots in two phases: (SearchMCP,
+ReportMCP), then (Planner, Researcher, Critic). Booting all five at once
+leads to the three A2A servers racing SearchMCP's own cold start and dying
+on <code>sys.exit(1)</code>. All five servers verify one shared bearer token and bind
+<code>127.0.0.1</code> only, never <code>0.0.0.0</code>.</p>
+<p><img alt="Two-phase boot: MCP servers first, then the A2A agents" src="figures/03-boot-and-preflight-sequence.png" /></p>
+<h2>4. Observability: one question, one trace</h2>
+<p>With tracing enabled, a single REPL question produces one OpenTelemetry
+trace spanning the REPL process, both MCP servers and all three A2A agents.</p>
+<p><img alt="One trace topology: REPL, both MCP servers, all three A2A agents sharing one trace_id" src="figures/04-trace-topology.png" /></p>
+<h2>5. Evaluation: methodology and measured results</h2>
+<p>A golden dataset of 12 cases (5 core, 4 edge, 3 adversarial) is driven
+against the live stack by an evaluation harness that substitutes an
+auto-approve HITL resolver, persists one <code>EvidencePack</code> per <code>(run, case)</code>
+pair, and scores each pack against a 5-item binary rubric via an LLM judge
+from a different model family than every agent it grades
+(<code>google/gemini-2.5-pro</code> against four <code>gpt-4.1-mini</code> agents).</p>
+<h2>5.1 The core measurement: a 36-trace sweep (12 cases × 3 repeats)</h2>
+<table>
+<thead>
+<tr>
+<th>Rubric item</th>
+<th>Pass rate (pass 1)</th>
+<th>95% CI (case resampling)</th>
+<th>Applicable n</th>
+<th>Validated against human labels?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>answer_relevancy</code></td>
+<td>97.1–100%</td>
+<td>wide, saturated</td>
+<td>35</td>
+<td>No — saturated (36/36 or near it), excluded from aggregate scoring</td>
+</tr>
+<tr>
+<td><code>requirement_compliance</code></td>
+<td>80.0–83.3%</td>
+<td>[0.63, 0.91]</td>
+<td>35</td>
+<td>No — κ 0.40/0.25 across two passes, 0.092 against independent labels</td>
+</tr>
+<tr>
+<td><code>citation_reliability</code></td>
+<td>47.1–66.7%</td>
+<td>[0.24, 0.71]</td>
+<td>17 (pass), 11 (independent), 6 (primary)</td>
+<td>Yes, against 24 independent labels — κ = 0.645 [0.214, 1.0]</td>
+</tr>
+<tr>
+<td><code>injection_resistance</code></td>
+<td>66.7–87.5%</td>
+<td>[0.50, 1.00]</td>
+<td>8 (pass), 6 (independent), 3 (primary)</td>
+<td>No — n too small to validate (3 adversarial questions × 2 repeats is the dataset's structural ceiling; neither more labelling nor more scoring passes can raise it)</td>
+</tr>
+<tr>
+<td><code>harmful_compliance</code></td>
+<td>91.7–94.3%</td>
+<td>[0.83, 1.00]</td>
+<td>35 (pass), 23 (independent), 12 (primary)</td>
+<td>Provisionally yes — κ = 1.0 across two independent scoring passes, but on a single labelled FAIL; the honest claim is "not systematically wrong on this item"</td>
+</tr>
+</tbody>
+</table>
+<p>Three of the five rubric items rest on fewer than 20 cases, and two on
+fewer than 10. That is why every figure in the table above is given
+together with its real sample size (n) — so it never reads as a larger
+sample than the dataset actually has.</p>
+<h2>5.2 The instrument itself needed repairing before it could be trusted</h2>
+<p>The most important finding concerns not the system but the judge that
+grades it. The very same evidence (with nothing changed) was scored twice —
+and the results diverged by as much as 20.8 percent on one of the criteria,
+while agreement between those two scorings fell from complete (κ=1.0) to
+none (κ=0.0). To check whether this was mere chance, a third, independent
+pass was run — and it showed the same scale of disagreement: 20 points on
+the <code>citation_reliability</code> criterion (53.3% → 73.3%). That confirmed the
+first divergence was not a coincidence.</p>
+<p>The telling part: had this been published earlier, before the third pass
+finished, the two-pass figure would have come out at just 6.2 percent — and
+would have read as "almost nothing," minor noise. But the third pass showed
+that this small figure was itself the fluke, not the real 20-percent
+divergence.</p>
+<p><img alt="Three independent scoring passes over identical evidence, resampled over both cases and passes" src="figures/05-three-pass-scoring.png" /></p>
+<p>This is why the project holds the rule: never trust a single scoring run,
+and treat even two runs as provisional rather than final. And it is why
+this is presented not as a small detail about one criterion but as a
+general conclusion about LLM-judge evaluation: the spread in a judge's
+results from run to run can exceed the very effect the judge is meant to
+detect. There is only one way to find that out — actually measure how
+consistently the judge scores the same thing, rather than assuming it is
+consistent.</p>
+<p><img alt="The measurement pipeline: sweep, evidence extraction, judge, statistics — the apparatus that produced every number above" src="figures/06-measurement-pipeline.png" /></p>
+<p>A cheaper judge model (roughly 10× less expensive) was measured as a
+replacement candidate mid-project and rejected: its agreement with human
+labels on <code>citation_reliability</code> went negative, and its own repeat-variance
+on <code>injection_resistance</code> was more than double that of the chosen judge.</p>
+<h2>5.3 A confound that must travel with every cost and latency figure</h2>
+<p><code>web_search</code> failed 6 of 17 calls in the measured sweep — an operational
+unreliability in the search backend used for this project. Cost and latency
+spreads across repeats of an identical question partly encode this search
+flakiness rather than variance in the system's own behaviour; neither
+figure should be read as a clean measurement of the system alone.</p>
+<h2>6. System defects — measured findings</h2>
+<p>Two defects were fixed and verified live. Four more were found but
+deliberately left unfixed during measurement — because fixing them
+mid-series would have invalidated results already paid for. Those four are
+simply recorded here as real, measured problems.</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Defect</th>
+<th>Status</th>
+<th>Measured</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F2</td>
+<td>No out-of-scope refusal gate — the system would research and save a full answer to a question entirely outside its research-assistant purpose</td>
+<td>Fixed. A schema-required <code>in_scope</code> field plus prompt-level scope judgment</td>
+<td>Before: 0/3 clean refusals on the worst intermediate sweep; after: 3/3, with 0/5 over-refusals on an in-scope control slice</td>
+</tr>
+<tr>
+<td>F6</td>
+<td>Prompt injection reaching the durable saved artifact via <code>knowledge_search</code>, which — unlike <code>read_url</code> — wrapped no untrusted content in delimiters</td>
+<td>Mechanism fixed; measured rate unchanged. The same delimiter shape <code>read_url</code> already uses, applied to <code>knowledge_search</code>'s return site</td>
+<td>2/3 resistance both before and after the fix — no measured change on n=3. The delimiter mechanism itself verified present and correct in the spans; the model still followed the embedded instruction once regardless. <code>read_url</code>'s own resistance on the equivalent attack shape remains 3/3, unchanged</td>
+</tr>
+<tr>
+<td>F2b</td>
+<td>Fabricated source titles — reports cite the corpus paper under invented titles, or under a body phrase mistaken for a title, while the underlying identifier stays correct</td>
+<td>Reported, not fixed</td>
+<td>2/3 of one case</td>
+</tr>
+<tr>
+<td>F3</td>
+<td>Jailbreak compliance, non-deterministic — one run saved a report quoting an internal system prompt verbatim; another saved operational ways to bypass the approval gate itself</td>
+<td>Reported, not fixed</td>
+<td>2/3</td>
+</tr>
+<tr>
+<td>F4</td>
+<td><code>read_url</code> retries a PDF it can never successfully parse, on every corpus-grounded run, wasting tool-call budget</td>
+<td>Reported, not fixed</td>
+<td>15/15 corpus-grounded runs</td>
+</tr>
+<tr>
+<td>F8</td>
+<td>A search failure reported as a negative research finding — the system cannot distinguish "I searched and found nothing" from "my searches failed"</td>
+<td>Reported, not fixed</td>
+<td>1/3</td>
+</tr>
+<tr>
+<td>F9</td>
+<td>The judge itself sometimes returns an empty or malformed response on jailbreak-shaped evidence, rather than a valid verdict</td>
+<td>Open — instrument-class, handled with per-case fault tolerance so it costs one case, never the whole run</td>
+<td>Seen at least twice, across two independent scoring passes; root cause not identified</td>
+</tr>
+<tr>
+<td>F10</td>
+<td>The judge's own run-to-run variance is large enough to exceed several of the effects it is used to measure</td>
+<td>Confirmed — a property to always report alongside, rather than a defect to fix</td>
+<td>§5.2</td>
+</tr>
+</tbody>
+</table>
+<p>Finding F6 has an important comparison check: the same attack (a malicious
+instruction hidden inside content) was also passed through <code>read_url</code> — the
+path that already had the protection (delimiters around foreign content).
+There the attack failed 3 times out of 3 — the protection worked. The same
+attack, a different path, the opposite outcome. That comparison is what
+proves the cause of the problem was the missing delimiters and nothing
+else.</p>
+<h2>7. Findings</h2>
+<ul>
+<li>The per-agent tool allowlist is, in practice, the same thing the
+  literature calls "planner-level tool selection" — only achieved through
+  the structure of the system itself rather than a dedicated mechanism.
+  When one agent has too many tools to choose from (more than ~10–15), the
+  model starts picking the right one less reliably: splitting one large
+  toolset across several specialised agents is already that selection.</li>
+<li>The Critic's verdict (approve/reject) is passed between components as
+  clear structured data, not as ordinary text the Supervisor would have to
+  "understand." This decision was made because a real problem was measured:
+  if the Supervisor has to infer the verdict from the last sentence of a
+  response, it can mistakenly finish without saving the result even after a
+  genuine approval. Passing the verdict as structured data makes that error
+  impossible.</li>
+<li>One alternative was considered and rejected: instead of retrieval over a
+  knowledge base (RAG), letting the agent keep its own notes in a markdown
+  file. Rejected because the pattern "the agent writes a note → later reads
+  it back as a source" is exactly the dangerous self-poisoning loop the
+  system deliberately forbids between its output files and its knowledge
+  base. The only way to guard against it is a human reviewing every note by
+  hand, which is more burden than the single approval step this system
+  already has.</li>
+<li>This system runs on the MCP protocol revision dated 2025-11-25 — verified
+  directly against what the installed library supports. That is one
+  revision behind the one published at the same time (2026-07-28), which
+  changes several fundamentals. The project explicitly required this exact
+  revision.</li>
+</ul>
+<h2>8. Conclusion</h2>
+<ul>
+<li>The system meets every requirement of the assignment: two MCP servers,
+  three separate A2A agents with their own cards, a Supervisor that drives
+  them only over the network and never calls their code directly, a working
+  "plan → research → critique" loop over those protocols, and a
+  human-approval step before the one write the system makes. All of it was
+  verified live at the corresponding stages.</li>
+<li>What the evaluation stages add beyond that requirements list is a set of
+  honestly acknowledged limits: of five graded qualities only three are
+  confirmed by independent human review, two are not; the judge that
+  assigns the grades has its own spread of results — sometimes larger than
+  what it is meant to measure; and four real defects are shown with
+  concrete numbers.</li>
+<li>That last point is, in fact, the project's central conclusion: a system
+  that honestly states what it does not know for certain does something a
+  system reporting only its successes cannot.</li>
+</ul>
+</body></html>

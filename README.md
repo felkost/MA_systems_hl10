@@ -87,7 +87,8 @@ sequenceDiagram
     S-->>You: approve / edit / reject?
     You->>S: approve
     S->>Report: MCP · save_report
-    Report-->>You: a file in output/
+    Report-->>S: path
+    S-->>You: Report saved to: path
 ```
 
 ## Install and run
@@ -338,8 +339,8 @@ the repository; deleting one is a tracked change like any other.
 ## Documentation
 
 The full report — architecture, tested scenarios, measured numbers with
-confidence intervals — lives at `report/report_en.md` and
-`report/report_ua.md`.
+confidence intervals — lives at `report/report_en.html` and
+`report/report_ua.html`, with its diagrams in `report/figures/`.
 
 `output/` carries what the system itself wrote: real reports from real REPL
 sessions, unedited, each one the artefact of a full Plan → Research →

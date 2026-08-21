@@ -34,13 +34,21 @@ logs/
 *.log
 runtime/
 
-# Markdown: only README.md and the final report are tracked. Agent-facing
-# docs (CLAUDE.md, AGENTS.md, CONTRIBUTING.md, insights.md, handoff.md) are
-# local-only by explicit decision -- they never leave this machine, so every
-# session must run from this same checkout.
+# Markdown: only README.md is tracked. Agent-facing docs (CLAUDE.md,
+# AGENTS.md, CONTRIBUTING.md, insights.md, handoff.md) are local-only by
+# explicit decision -- they never leave this machine, so every session must
+# run from this same checkout.
 *.md
 !README.md
-!report/*.md
+
+# report/ ships the rendered report and its figures, not the sources it was
+# built from: the Markdown originals and the Word copies stay local
+# (author's decision, 2026-08-21). A reader of the clone gets report_en.html
+# / report_ua.html plus report/figures/, which is the report as published --
+# one artefact per language, not four formats of the same text drifting
+# apart between edits.
+report/*.docx
+report/~$*
 
 # evals/ is a declared exception to the local-only doc policy above (spec
 # Sec13, decision D5): the golden dataset and its fixtures ship publicly,
